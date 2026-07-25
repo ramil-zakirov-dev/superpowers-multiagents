@@ -11,9 +11,13 @@ import re
 import argparse
 import subprocess
 import tempfile
+import logging
 from pathlib import Path
 from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 import io
+
+logger = logging.getLogger("orchestrator")
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
@@ -35,11 +39,56 @@ STATE_TRANSITIONS = {
     "PLANNING": ["PLAN_GENERATED"],
     "PLAN_GENERATED": ["PLAN_APPROVED", "PLANNING"],
     "PLAN_APPROVED": ["EXECUTING", "PLAN_GENERATED"],
-    "EXECUTING": ["EXECUTION_COMPLETE"],
-    "EXECUTION_COMPLETE": ["VERIFIED_CLOSED", "EXECUTING"],
+    "EXECUTING": ["EXECUTION_COMPLETE", "MERGE_CONFLICT"],
+    "EXECUTION_COMPLETE": ["VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"],
     "VERIFIED_CLOSED": [],
     "MERGE_CONFLICT": ["VERIFIED_CLOSED", "EXECUTING", "PLAN_APPROVED"]
 }
+
+# Regex for validating slice_id / branch names (alphanumeric, hyphens, underscores, dots)
+SAFE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def _sanitize_id(value: str, label: str = "ID") -> str:
+    """Validates that a string is safe for use in shell commands and git branch names."""
+    if not SAFE_ID_PATTERN.match(value):
+        print(f"Error: {label} '{value}' contains invalid characters. "
+              f"Only alphanumeric, hyphens, underscores, and dots are allowed.")
+        sys.exit(1)
+    return value
+
+
+def _to_plain_dict(obj) -> dict | list | str | int | float | bool | None:
+    """Recursively converts ruamel.yaml CommentedMap/CommentedSeq to plain Python types."""
+    if isinstance(obj, CommentedMap):
+        return {str(k): _to_plain_dict(v) for k, v in obj.items()}
+    elif isinstance(obj, CommentedSeq):
+        return [_to_plain_dict(item) for item in obj]
+    elif isinstance(obj, list):
+        return [_to_plain_dict(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {str(k): _to_plain_dict(v) for k, v in obj.items()}
+    return obj
+
+
+def find_project_root(start_path: Path) -> Path:
+    """
+    Walks up the directory tree from start_path looking for a project root marker.
+    Markers (in priority order): .superpowers/, .git/
+    Falls back to start_path if no marker is found.
+    """
+    current = start_path.resolve()
+    if current.is_file():
+        current = current.parent
+
+    for directory in [current, *current.parents]:
+        if (directory / ".superpowers").is_dir():
+            return directory
+        if (directory / ".git").is_dir():
+            return directory
+
+    logger.warning(f"Could not find project root from '{start_path}', using '{current}'.")
+    return current
 
 
 def parse_frontmatter(content: str) -> dict:
@@ -47,9 +96,13 @@ def parse_frontmatter(content: str) -> dict:
     match = FRONTMATTER_PATTERN.match(content)
     if not match:
         return {}
-    yaml = YAML(typ='rt')
-    data = yaml.load(match.group(1))
-    return dict(data) if data else {}
+    try:
+        yaml = YAML(typ='rt')
+        data = yaml.load(match.group(1))
+        return _to_plain_dict(data) if data else {}
+    except Exception as e:
+        logger.warning(f"Failed to parse YAML frontmatter: {e}")
+        return {}
 
 
 def update_frontmatter_status(filepath: Path, new_status: str) -> bool:
@@ -76,7 +129,12 @@ def update_frontmatter_status(filepath: Path, new_status: str) -> bool:
 
         if match:
             yaml_text = match.group(1)
-            data = yaml.load(yaml_text) or {}
+            try:
+                data = yaml.load(yaml_text) or {}
+            except Exception as e:
+                print(f"Error: Could not parse YAML frontmatter in {filepath.name}: {e}")
+                return False
+
             current_status = data.get("status", "UNKNOWN")
             
             # Strict transition check
@@ -103,7 +161,7 @@ def update_frontmatter_status(filepath: Path, new_status: str) -> bool:
         os.replace(temp_name, filepath)
         print(f"Updated {filepath.name} status -> {new_status}")
         return True
-    except Exception as e:
+    except (IOError, OSError) as e:
         print(f"Error updating frontmatter in {filepath}: {e}")
         return False
 
@@ -118,9 +176,13 @@ def load_project_hooks(project_root: Path = None) -> dict:
         return {}
 
     content = hooks_file.read_text(encoding="utf-8")
-    yaml = YAML(typ='rt')
-    parsed = yaml.load(content) or {}
-    return parsed.get("hooks", {})
+    try:
+        yaml = YAML(typ='rt')
+        parsed = yaml.load(content) or {}
+    except Exception as e:
+        logger.warning(f"Failed to parse hooks.yaml: {e}")
+        return {}
+    return _to_plain_dict(parsed.get("hooks", {}))
 
 
 def run_infrastructure_hook(event_name: str, project_root: Path = None, current_env: dict = None) -> dict:
@@ -199,10 +261,21 @@ def check_unmet_dependencies(spec_file: Path) -> list:
     specs_dir = spec_file.parent
 
     for dep_id in depends_on:
-        matching = list(specs_dir.glob(f"*{dep_id}*.md"))
+        # Use exact boundary matching to avoid slice-1 matching slice-10
+        matching = [
+            f for f in specs_dir.glob("*.md")
+            if dep_id in f.stem.split("-")
+            or f.stem.endswith(dep_id)
+            or dep_id == f.stem
+        ]
         if not matching:
-            unmet.append(f"{dep_id} (Spec not found)")
-            continue
+            # Fallback: try substring match but only if exactly one result
+            fallback = list(specs_dir.glob(f"*{dep_id}*.md"))
+            if len(fallback) == 1:
+                matching = fallback
+            else:
+                unmet.append(f"{dep_id} (Spec not found)")
+                continue
         
         dep_spec = matching[0]
         dep_fm = parse_frontmatter(dep_spec.read_text(encoding="utf-8"))
@@ -219,6 +292,8 @@ def create_git_worktree(slice_id: str, project_root: Path = None) -> Path:
     if project_root is None:
         project_root = Path.cwd()
 
+    _sanitize_id(slice_id, "slice_id")
+
     worktrees_dir = project_root / ".worktrees"
     worktree_path = worktrees_dir / slice_id
     branch_name = f"feat/{slice_id}"
@@ -231,8 +306,7 @@ def create_git_worktree(slice_id: str, project_root: Path = None) -> Path:
     print(f"[Git Worktree] Creating worktree for branch '{branch_name}' at '{worktree_path}'...")
 
     res = subprocess.run(
-        f"git worktree add -b {branch_name} \"{worktree_path}\" HEAD",
-        shell=True,
+        ["git", "worktree", "add", "-b", branch_name, str(worktree_path), "HEAD"],
         cwd=project_root,
         capture_output=True,
         text=True
@@ -240,8 +314,7 @@ def create_git_worktree(slice_id: str, project_root: Path = None) -> Path:
 
     if res.returncode != 0:
         res2 = subprocess.run(
-            f"git worktree add \"{worktree_path}\" {branch_name}",
-            shell=True,
+            ["git", "worktree", "add", str(worktree_path), branch_name],
             cwd=project_root,
             capture_output=True,
             text=True
@@ -260,14 +333,15 @@ def merge_and_cleanup_worktree(slice_id: str, spec_file: Path = None, project_ro
     if project_root is None:
         project_root = Path.cwd()
 
+    _sanitize_id(slice_id, "slice_id")
+
     branch_name = f"feat/{slice_id}"
     worktree_path = project_root / ".worktrees" / slice_id
 
     print(f"[Git Merge] Attempting to merge '{branch_name}' into current branch...")
 
     res = subprocess.run(
-        f"git merge {branch_name}",
-        shell=True,
+        ["git", "merge", branch_name],
         cwd=project_root,
         capture_output=True,
         text=True
@@ -289,8 +363,7 @@ def merge_and_cleanup_worktree(slice_id: str, spec_file: Path = None, project_ro
     if worktree_path.exists():
         print(f"[Git Worktree] Removing worktree at '{worktree_path}'...")
         subprocess.run(
-            f"git worktree remove --force \"{worktree_path}\"",
-            shell=True,
+            ["git", "worktree", "remove", "--force", str(worktree_path)],
             cwd=project_root,
             capture_output=True
         )
@@ -333,7 +406,7 @@ def cmd_set_status(args):
     filepath = Path(args.file)
     success = update_frontmatter_status(filepath, args.status)
     if success and args.status == "VERIFIED_CLOSED":
-        project_root = filepath.parent.parent.parent
+        project_root = find_project_root(filepath)
         fm = parse_frontmatter(filepath.read_text(encoding="utf-8"))
         slice_id = fm.get("slice_id", filepath.stem)
         
@@ -361,7 +434,7 @@ def cmd_dispatch_planner(args):
             print(f"   - {dep}")
         sys.exit(1)
 
-    project_root = spec_file.parent.parent.parent
+    project_root = find_project_root(spec_file)
     env = run_infrastructure_hook("on_slice_planning_start", project_root=project_root)
 
     update_frontmatter_status(spec_file, "PLANNING")
@@ -407,7 +480,7 @@ def cmd_dispatch_executor(args):
         print(f"Error: Plan file '{plan_file}' not found.")
         sys.exit(1)
 
-    project_root = plan_file.parent.parent.parent
+    project_root = find_project_root(plan_file)
     fm = parse_frontmatter(plan_file.read_text(encoding="utf-8"))
     slice_id = fm.get("slice_id", plan_file.stem)
 

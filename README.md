@@ -124,7 +124,7 @@ hooks:
 Clone or install alongside your existing `obra/superpowers` setup:
 
 ```bash
-git clone https://github.com/your-username/superpowers-multiagents.git C:\Users\vkukm\repos\superpowers-multiagents
+git clone https://github.com/your-username/superpowers-multiagents.git
 ```
 
 ### 2. Check Workflow Status
@@ -152,6 +152,14 @@ python scripts/orchestrator.py set-status --file docs/superpowers/plans/2026-07-
 python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
 ```
 
+### 5. Trigger Infrastructure Hooks
+
+Manually trigger hooks defined in `.superpowers/hooks.yaml`:
+
+```bash
+python scripts/orchestrator.py trigger-hook --event on_execution_complete --dir .
+```
+
 ---
 
 ## 🧪 Testing
@@ -171,7 +179,9 @@ superpowers-multiagents/
 ├── .claude-plugin/
 │   └── plugin.json             # Claude Code / Desktop plugin manifest
 ├── assets/
-│   └── banner.png              # Project banner graphic
+│   ├── banner.png              # Project banner graphic
+│   ├── icon.png                # 24x24 project icon (PNG)
+│   └── icon.svg                # 24x24 project icon (SVG)
 ├── hooks/
 │   ├── hooks.json              # Hook registration
 │   └── session-start           # SessionStart prompt injector
@@ -183,6 +193,7 @@ superpowers-multiagents/
 ├── tests/
 │   └── test_orchestrator.py    # Pytest test suite
 ├── package.json
+├── requirements.txt            # Python dependencies (ruamel.yaml)
 └── README.md
 ```
 
