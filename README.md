@@ -135,21 +135,30 @@ Inspect the current status of all milestones, tracks, specs, and plans:
 python scripts/orchestrator.py status
 ```
 
-### 3. Dispatch Kimi K3 Planner
+### 3. Dispatch Planner
 
 When a design spec reaches `SPEC_APPROVED`:
 
 ```bash
+# Default model (kimi-k3):
 python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
+
+# Custom model:
+python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md --model gemini-2.5-pro
 ```
 
-### 4. Approve Plan & Dispatch Minimax M3 Executor
+### 4. Approve Plan & Dispatch Executor
 
 When Opus 5 audits and approves the generated plan:
 
 ```bash
 python scripts/orchestrator.py set-status --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --status PLAN_APPROVED
+
+# Default model (minimax-m3):
 python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
+
+# Custom model:
+python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --model claude-sonnet-4
 ```
 
 ### 5. Trigger Infrastructure Hooks

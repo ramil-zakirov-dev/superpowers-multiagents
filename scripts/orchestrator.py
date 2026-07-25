@@ -12,6 +12,8 @@ import argparse
 import subprocess
 import tempfile
 import logging
+import json
+import atexit
 from pathlib import Path
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -19,7 +21,11 @@ import io
 
 logger = logging.getLogger("orchestrator")
 
-FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+# BOM-tolerant frontmatter pattern: strips optional UTF-8 BOM before ---
+FRONTMATTER_PATTERN = re.compile(r"^\ufeff?---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+DEFAULT_PLANNER_MODEL = "kimi-k3"
+DEFAULT_EXECUTOR_MODEL = "minimax-m3"
 
 VALID_STATUSES = [
     "DRAFT_SPEC",
@@ -91,6 +97,88 @@ def find_project_root(start_path: Path) -> Path:
     return current
 
 
+def acquire_slice_lock(slice_id: str, project_root: Path) -> Path:
+    """
+    Acquires an exclusive lock for a slice to prevent concurrent dispatch.
+    Creates .superpowers/locks/<slice_id>.lock with PID info.
+    Returns the lock file path on success, exits on conflict.
+    """
+    _sanitize_id(slice_id, "slice_id")
+    locks_dir = project_root / ".superpowers" / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = locks_dir / f"{slice_id}.lock"
+
+    if lock_file.exists():
+        try:
+            lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+            existing_pid = lock_data.get("pid")
+            # Check if the process is still alive
+            if existing_pid and _is_process_alive(existing_pid):
+                print(f"❌ [Lock] Slice '{slice_id}' is already locked by PID {existing_pid} "
+                      f"(command: {lock_data.get('command', 'unknown')}).")
+                print(f"   Lock file: {lock_file}")
+                print(f"   To force unlock: delete {lock_file}")
+                sys.exit(1)
+            else:
+                print(f"[Lock] Stale lock found for '{slice_id}' (PID {existing_pid} is dead). Cleaning up.")
+                lock_file.unlink()
+        except (json.JSONDecodeError, KeyError):
+            print(f"[Lock] Corrupt lock file for '{slice_id}'. Cleaning up.")
+            lock_file.unlink()
+
+    lock_data = {
+        "pid": os.getpid(),
+        "slice_id": slice_id,
+        "command": " ".join(sys.argv),
+    }
+    lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+    print(f"[Lock] Acquired lock for slice '{slice_id}'.")
+    return lock_file
+
+
+def release_slice_lock(slice_id: str, project_root: Path) -> None:
+    """Releases the lock for a slice."""
+    lock_file = project_root / ".superpowers" / "locks" / f"{slice_id}.lock"
+    if lock_file.exists():
+        lock_file.unlink()
+        print(f"[Lock] Released lock for slice '{slice_id}'.")
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Checks if a process with the given PID is still running."""
+    try:
+        if os.name == "nt":
+            # Windows: use tasklist
+            res = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True
+            )
+            return str(pid) in res.stdout
+        else:
+            # Unix: send signal 0 (no-op, just checks existence)
+            os.kill(pid, 0)
+            return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def check_working_tree_clean(project_root: Path) -> bool:
+    """
+    Checks if the git working tree is clean (no uncommitted changes).
+    Returns True if clean, False if dirty.
+    """
+    res = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    if res.returncode != 0:
+        logger.warning(f"Could not check git status: {res.stderr}")
+        return False
+    return res.stdout.strip() == ""
+
+
 def parse_frontmatter(content: str) -> dict:
     """Parses YAML frontmatter from a Markdown string using ruamel.yaml."""
     match = FRONTMATTER_PATTERN.match(content)
@@ -121,7 +209,7 @@ def update_frontmatter_status(filepath: Path, new_status: str) -> bool:
         return False
 
     try:
-        content = filepath.read_text(encoding="utf-8")
+        content = filepath.read_text(encoding="utf-8").lstrip("\ufeff")
         match = FRONTMATTER_PATTERN.match(content)
         
         yaml = YAML(typ='rt')
@@ -338,6 +426,12 @@ def merge_and_cleanup_worktree(slice_id: str, spec_file: Path = None, project_ro
     branch_name = f"feat/{slice_id}"
     worktree_path = project_root / ".worktrees" / slice_id
 
+    # Check for dirty working tree before attempting merge
+    if not check_working_tree_clean(project_root):
+        print(f"❌ [Git Merge] Working tree is dirty. Please commit or stash changes before merging.")
+        print(f"   Run 'git status' in '{project_root}' to see uncommitted changes.")
+        return False
+
     print(f"[Git Merge] Attempting to merge '{branch_name}' into current branch...")
 
     res = subprocess.run(
@@ -421,11 +515,13 @@ def cmd_trigger_hook(args):
 
 
 def cmd_dispatch_planner(args):
-    """Dispatches background OpenCode task for Kimi K3 planner after checking dependencies."""
+    """Dispatches background OpenCode task for planner after checking dependencies."""
     spec_file = Path(args.spec)
     if not spec_file.exists():
         print(f"Error: Spec file '{spec_file}' not found.")
         sys.exit(1)
+
+    model = args.model if hasattr(args, 'model') and args.model else DEFAULT_PLANNER_MODEL
 
     unmet = check_unmet_dependencies(spec_file)
     if unmet:
@@ -435,6 +531,12 @@ def cmd_dispatch_planner(args):
         sys.exit(1)
 
     project_root = find_project_root(spec_file)
+
+    # Extract slice_id for locking
+    fm = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
+    slice_id = fm.get("slice_id", spec_file.stem)
+    lock_file = acquire_slice_lock(slice_id, project_root)
+
     env = run_infrastructure_hook("on_slice_planning_start", project_root=project_root)
 
     update_frontmatter_status(spec_file, "PLANNING")
@@ -444,7 +546,7 @@ def cmd_dispatch_planner(args):
     log_file = logs_dir / f"planner_{spec_file.stem}.log"
 
     opencode_cmd = (
-        f"opencode run --model kimi-k3 "
+        f"opencode run --model {model} "
         f"\"Read spec at {spec_file} and create detailed TDD implementation plan "
         f"using writing-plans skill. Save to docs/superpowers/plans/\""
     )
@@ -453,7 +555,7 @@ def cmd_dispatch_planner(args):
     orchestrator_path = Path(__file__).resolve()
     chained_cmd = f"{opencode_cmd} && python \"{orchestrator_path}\" trigger-hook --event on_planning_complete --dir \"{project_root}\""
 
-    print(f"Dispatching Kimi K3 Planner in background...")
+    print(f"Dispatching {model} Planner in background...")
     print(f"Log: {log_file}")
 
     if os.name == "nt":
@@ -470,19 +572,30 @@ def cmd_dispatch_planner(args):
             env=env
         )
 
+    # Update lock with spawned PID
+    lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+    lock_data["worker_pid"] = proc.pid
+    lock_data["model"] = model
+    lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+
     print(f"Planner dispatched successfully. PID: {proc.pid}")
 
 
 def cmd_dispatch_executor(args):
-    """Dispatches background OpenCode task for Minimax M3 executor inside an isolated worktree."""
+    """Dispatches background OpenCode task for executor inside an isolated worktree."""
     plan_file = Path(args.plan)
     if not plan_file.exists():
         print(f"Error: Plan file '{plan_file}' not found.")
         sys.exit(1)
 
+    model = args.model if hasattr(args, 'model') and args.model else DEFAULT_EXECUTOR_MODEL
+
     project_root = find_project_root(plan_file)
     fm = parse_frontmatter(plan_file.read_text(encoding="utf-8"))
     slice_id = fm.get("slice_id", plan_file.stem)
+
+    # Acquire lock before creating worktree
+    lock_file = acquire_slice_lock(slice_id, project_root)
 
     worktree_path = create_git_worktree(slice_id, project_root=project_root)
     env = run_infrastructure_hook("on_slice_execution_start", project_root=project_root)
@@ -494,7 +607,7 @@ def cmd_dispatch_executor(args):
     log_file = logs_dir / f"executor_{plan_file.stem}.log"
 
     opencode_cmd = (
-        f"opencode run --model minimax-m3 "
+        f"opencode run --model {model} "
         f"\"Execute implementation plan at {plan_file} using TDD subagent execution. "
         f"Check off tasks in plan as completed.\""
     )
@@ -503,7 +616,7 @@ def cmd_dispatch_executor(args):
     orchestrator_path = Path(__file__).resolve()
     chained_cmd = f"{opencode_cmd} && python \"{orchestrator_path}\" trigger-hook --event on_execution_complete --dir \"{project_root}\""
 
-    print(f"Dispatching Minimax M3 Executor in background at worktree '{worktree_path}'...")
+    print(f"Dispatching {model} Executor in background at worktree '{worktree_path}'...")
     print(f"Log: {log_file}")
 
     if os.name == "nt":
@@ -521,6 +634,12 @@ def cmd_dispatch_executor(args):
             cwd=worktree_path,
             env=env
         )
+
+    # Update lock with spawned PID
+    lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+    lock_data["worker_pid"] = proc.pid
+    lock_data["model"] = model
+    lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
 
     print(f"Executor dispatched successfully. PID: {proc.pid}")
 
@@ -566,11 +685,13 @@ def main():
     p_trigger.add_argument("--event", required=True, help="Hook event name (e.g. on_execution_complete)")
     p_trigger.add_argument("--dir", default="", help="Project root directory")
 
-    p_plan = subparsers.add_parser("dispatch-planner", help="Dispatch Kimi K3 planner for a spec")
+    p_plan = subparsers.add_parser("dispatch-planner", help="Dispatch planner for a spec")
     p_plan.add_argument("--spec", required=True, help="Path to design spec file")
+    p_plan.add_argument("--model", default=DEFAULT_PLANNER_MODEL, help=f"LLM model for planner (default: {DEFAULT_PLANNER_MODEL})")
 
-    p_exec = subparsers.add_parser("dispatch-executor", help="Dispatch Minimax M3 executor for a plan")
+    p_exec = subparsers.add_parser("dispatch-executor", help="Dispatch executor for a plan")
     p_exec.add_argument("--plan", required=True, help="Path to plan file")
+    p_exec.add_argument("--model", default=DEFAULT_EXECUTOR_MODEL, help=f"LLM model for executor (default: {DEFAULT_EXECUTOR_MODEL})")
 
     p_sum = subparsers.add_parser("summary", help="Show execution summary log for Opus 5 audit")
     p_sum.add_argument("--slice", required=True, help="Slice ID or keyword")

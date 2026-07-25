@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
+import json
 from scripts.orchestrator import (
     parse_frontmatter,
     update_frontmatter_status,
@@ -11,9 +12,14 @@ from scripts.orchestrator import (
     run_infrastructure_hook,
     check_unmet_dependencies,
     find_project_root,
+    acquire_slice_lock,
+    release_slice_lock,
+    check_working_tree_clean,
     _sanitize_id,
     _to_plain_dict,
     STATE_TRANSITIONS,
+    DEFAULT_PLANNER_MODEL,
+    DEFAULT_EXECUTOR_MODEL,
 )
 
 
@@ -471,3 +477,92 @@ def test_cmd_trigger_hook():
         args = argparse.Namespace(event="on_test_event", dir=str(project_root))
         # Should not raise
         cmd_trigger_hook(args)
+
+
+# ===== BOM tolerance =====
+
+def test_parse_frontmatter_with_bom():
+    """Files starting with UTF-8 BOM should still parse correctly."""
+    bom_content = "\ufeff---\nstatus: DRAFT_SPEC\ntitle: BOM Test\n---\n\n# Content\n"
+    data = parse_frontmatter(bom_content)
+    assert data["status"] == "DRAFT_SPEC"
+    assert data["title"] == "BOM Test"
+
+
+def test_update_frontmatter_with_bom():
+    """update_frontmatter_status should work on BOM files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_file = Path(tmpdir) / "bom-test.md"
+        spec_file.write_text("\ufeff---\nstatus: DRAFT_SPEC\n---\n\n# Content\n", encoding="utf-8-sig")
+
+        assert update_frontmatter_status(spec_file, "SPEC_APPROVED") is True
+        data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
+        assert data["status"] == "SPEC_APPROVED"
+
+
+# ===== Slice Locking =====
+
+def test_acquire_and_release_lock():
+    """Lock acquisition and release should work correctly."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_root = Path(tmpdir)
+        (project_root / ".superpowers").mkdir()
+
+        lock_file = acquire_slice_lock("slice-01", project_root)
+        assert lock_file.exists()
+
+        lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+        assert lock_data["slice_id"] == "slice-01"
+        assert lock_data["pid"] == os.getpid()
+
+        release_slice_lock("slice-01", project_root)
+        assert not lock_file.exists()
+
+
+def test_acquire_lock_blocks_on_active_process():
+    """Acquiring a lock held by a live process should exit."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_root = Path(tmpdir)
+        (project_root / ".superpowers").mkdir()
+
+        # Acquire first lock (current process is alive)
+        acquire_slice_lock("slice-02", project_root)
+
+        # Second acquisition should fail
+        with pytest.raises(SystemExit):
+            acquire_slice_lock("slice-02", project_root)
+
+        # Cleanup
+        release_slice_lock("slice-02", project_root)
+
+
+def test_acquire_lock_cleans_stale_lock():
+    """Stale locks from dead processes should be cleaned up."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_root = Path(tmpdir)
+        locks_dir = project_root / ".superpowers" / "locks"
+        locks_dir.mkdir(parents=True)
+
+        # Write a lock with a PID that definitely doesn't exist
+        stale_lock = locks_dir / "slice-03.lock"
+        stale_lock.write_text(json.dumps({
+            "pid": 999999999,
+            "slice_id": "slice-03",
+            "command": "stale"
+        }), encoding="utf-8")
+
+        # Should clean up stale lock and acquire new one
+        lock_file = acquire_slice_lock("slice-03", project_root)
+        assert lock_file.exists()
+        lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+        assert lock_data["pid"] == os.getpid()  # Our PID, not the stale one
+
+        release_slice_lock("slice-03", project_root)
+
+
+# ===== Model defaults =====
+
+def test_default_model_constants():
+    """Default model constants should be defined."""
+    assert DEFAULT_PLANNER_MODEL == "kimi-k3"
+    assert DEFAULT_EXECUTOR_MODEL == "minimax-m3"
