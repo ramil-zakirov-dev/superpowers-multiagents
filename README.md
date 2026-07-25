@@ -1,4 +1,4 @@
-# 🚀 Superpowers Multi-Agents
+# <img src="assets/icon.svg" width="24" height="24" alt="Icon"> Superpowers Multi-Agents
 
 > **An enterprise-grade, cost-optimized 4-level LLM multi-agent orchestration framework extending [`obra/superpowers`](https://github.com/obra/superpowers).**
 
