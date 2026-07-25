@@ -1,0 +1,11 @@
+{
+  "name": "superpowers-multiagents",
+  "description": "Multi-agent orchestration plugin extending Superpowers workflows with OpenCode background execution for Kimi K3 and Minimax M3",
+  "version": "1.0.0",
+  "keywords": [
+    "multi-agent",
+    "orchestrator",
+    "opencode",
+    "superpowers"
+  ]
+}

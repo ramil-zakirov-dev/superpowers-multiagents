@@ -1,0 +1,13 @@
+{
+  "name": "superpowers-multiagents",
+  "version": "1.0.0",
+  "description": "Multi-agent orchestration extension for Superpowers (Fable 5, Opus 5, Kimi K3, Minimax M3 via OpenCode)",
+  "type": "module",
+  "keywords": [
+    "superpowers",
+    "multi-agent",
+    "opencode",
+    "orchestrator",
+    "tdd"
+  ]
+}
