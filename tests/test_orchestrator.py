@@ -24,7 +24,7 @@ depends_on:
 Some content here.
 """
     data = parse_frontmatter(sample_md)
-    assert data["milestone_id"] == "1"
+    assert data["milestone_id"] == 1
     assert data["slice_id"] == "slice-01"
     assert data["status"] == "SPEC_APPROVED"
     assert data["depends_on"] == ["slice-00-base"]
@@ -115,7 +115,8 @@ depends_on:
         assert len(unmet) == 1
         assert "slice-01-base" in unmet[0]
 
-        # Update base to VERIFIED_CLOSED
+        # Update base to VERIFIED_CLOSED through valid transitions
+        update_frontmatter_status(dep_spec, "EXECUTION_COMPLETE")
         update_frontmatter_status(dep_spec, "VERIFIED_CLOSED")
         unmet_after = check_unmet_dependencies(target_spec)
         assert len(unmet_after) == 0

@@ -12,6 +12,8 @@ import argparse
 import subprocess
 import tempfile
 from pathlib import Path
+from ruamel.yaml import YAML
+import io
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
@@ -27,78 +29,33 @@ VALID_STATUSES = [
     "VERIFIED_CLOSED"
 ]
 
-
-def parse_simple_yaml(content: str) -> dict:
-    """Robust indentation-aware YAML parser supporting nested dicts and list items."""
-    lines = content.splitlines()
-    data = {}
-    stack = [(-1, data)]
-
-    for idx, line_raw in enumerate(lines):
-        if not line_raw or line_raw.strip().startswith("#"):
-            continue
-
-        indent = len(line_raw) - len(line_raw.lstrip())
-        line_stripped = line_raw.strip()
-
-        # Handle list item
-        if line_stripped.startswith("- "):
-            val = line_stripped[2:].strip().strip('"').strip("'")
-            while stack and stack[-1][0] >= indent:
-                stack.pop()
-            parent_obj = stack[-1][1]
-            if isinstance(parent_obj, list):
-                parent_obj.append(val)
-            continue
-
-        if ":" not in line_stripped:
-            continue
-
-        key, val = line_stripped.split(":", 1)
-        key = key.strip()
-        val = val.strip().strip('"').strip("'")
-
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-
-        parent_dict = stack[-1][1]
-        if not isinstance(parent_dict, dict):
-            continue
-
-        if not val or val == "":
-            # Peek at next non-empty line to decide if new_obj is list or dict
-            is_list = False
-            for nxt in lines[idx + 1:]:
-                nxt_str = nxt.strip()
-                if nxt_str and not nxt_str.startswith("#"):
-                    if nxt_str.startswith("- "):
-                        is_list = True
-                    break
-            
-            new_obj = [] if is_list else {}
-            parent_dict[key] = new_obj
-            stack.append((indent, new_obj))
-        else:
-            if val.lower() == "true":
-                val = True
-            elif val.lower() == "false":
-                val = False
-            parent_dict[key] = val
-
-    return data
+STATE_TRANSITIONS = {
+    "DRAFT_SPEC": ["SPEC_APPROVED"],
+    "SPEC_APPROVED": ["PLANNING", "DRAFT_SPEC"],
+    "PLANNING": ["PLAN_GENERATED"],
+    "PLAN_GENERATED": ["PLAN_APPROVED", "PLANNING"],
+    "PLAN_APPROVED": ["EXECUTING", "PLAN_GENERATED"],
+    "EXECUTING": ["EXECUTION_COMPLETE"],
+    "EXECUTION_COMPLETE": ["VERIFIED_CLOSED", "EXECUTING"],
+    "VERIFIED_CLOSED": [],
+    "MERGE_CONFLICT": ["VERIFIED_CLOSED", "EXECUTING", "PLAN_APPROVED"]
+}
 
 
 def parse_frontmatter(content: str) -> dict:
-    """Parses YAML frontmatter from a Markdown string."""
+    """Parses YAML frontmatter from a Markdown string using ruamel.yaml."""
     match = FRONTMATTER_PATTERN.match(content)
     if not match:
         return {}
-    return parse_simple_yaml(match.group(1))
+    yaml = YAML(typ='rt')
+    data = yaml.load(match.group(1))
+    return dict(data) if data else {}
 
 
 def update_frontmatter_status(filepath: Path, new_status: str) -> bool:
     """
     Safely updates the status field in a markdown file's YAML frontmatter.
+    Enforces strict state transitions.
     Uses atomic file writing (.tmp + replace) to prevent race conditions.
     """
     if new_status not in VALID_STATUSES:
@@ -113,22 +70,30 @@ def update_frontmatter_status(filepath: Path, new_status: str) -> bool:
     try:
         content = filepath.read_text(encoding="utf-8")
         match = FRONTMATTER_PATTERN.match(content)
+        
+        yaml = YAML(typ='rt')
+        yaml.preserve_quotes = True
 
         if match:
             yaml_text = match.group(1)
-            if re.search(r"^status\s*:", yaml_text, re.MULTILINE):
-                updated_yaml = re.sub(
-                    r"^(status\s*:\s*).*",
-                    f"\\1{new_status}",
-                    yaml_text,
-                    flags=re.MULTILINE
-                )
-            else:
-                updated_yaml = yaml_text + f"\nstatus: {new_status}"
+            data = yaml.load(yaml_text) or {}
+            current_status = data.get("status", "UNKNOWN")
             
-            new_content = f"---\n{updated_yaml}\n---\n" + content[match.end():]
+            # Strict transition check
+            if current_status in STATE_TRANSITIONS and new_status not in STATE_TRANSITIONS[current_status] and current_status != new_status:
+                print(f"Error: Invalid state transition from '{current_status}' to '{new_status}'.")
+                return False
+
+            data["status"] = new_status
+            
+            buf = io.StringIO()
+            yaml.dump(data, buf)
+            new_yaml_text = buf.getvalue().strip()
+            
+            new_content = f"---\n{new_yaml_text}\n---\n" + content[match.end():]
         else:
-            new_content = f"---\nstatus: {new_status}\n---\n\n" + content
+            print(f"Error: Invalid transition. No frontmatter found to transition to {new_status}.")
+            return False
 
         parent_dir = filepath.parent
         with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8") as tf:
@@ -153,7 +118,8 @@ def load_project_hooks(project_root: Path = None) -> dict:
         return {}
 
     content = hooks_file.read_text(encoding="utf-8")
-    parsed = parse_simple_yaml(content)
+    yaml = YAML(typ='rt')
+    parsed = yaml.load(content) or {}
     return parsed.get("hooks", {})
 
 
@@ -281,8 +247,10 @@ def create_git_worktree(slice_id: str, project_root: Path = None) -> Path:
             text=True
         )
         if res2.returncode != 0:
-            print(f"[Git Worktree] Warning: Could not create worktree: {res2.stderr}")
-            return project_root
+            print(f"❌ [Git Worktree] Error: Could not create worktree:")
+            print(res2.stderr)
+            print("Aborting execution to prevent running in the main project branch.")
+            sys.exit(1)
 
     return worktree_path
 
@@ -373,6 +341,12 @@ def cmd_set_status(args):
         run_infrastructure_hook("on_slice_verified_closed", project_root=project_root)
 
 
+def cmd_trigger_hook(args):
+    """Manually or programmatically triggers an infrastructure hook."""
+    project_root = Path(args.dir) if args.dir else Path.cwd()
+    run_infrastructure_hook(args.event, project_root=project_root)
+
+
 def cmd_dispatch_planner(args):
     """Dispatches background OpenCode task for Kimi K3 planner after checking dependencies."""
     spec_file = Path(args.spec)
@@ -402,19 +376,23 @@ def cmd_dispatch_planner(args):
         f"using writing-plans skill. Save to docs/superpowers/plans/\""
     )
 
+    # Chain trigger-hook for completion
+    orchestrator_path = Path(__file__).resolve()
+    chained_cmd = f"{opencode_cmd} && python \"{orchestrator_path}\" trigger-hook --event on_planning_complete --dir \"{project_root}\""
+
     print(f"Dispatching Kimi K3 Planner in background...")
     print(f"Log: {log_file}")
 
     if os.name == "nt":
         proc = subprocess.Popen(
-            f"cmd.exe /c \"{opencode_cmd} > {log_file} 2>&1\"",
+            f"cmd.exe /c \"{chained_cmd} > {log_file} 2>&1\"",
             shell=True,
             env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE
         )
     else:
         proc = subprocess.Popen(
-            f"nohup {opencode_cmd} > {log_file} 2>&1 &",
+            f"nohup bash -c '{chained_cmd}' > {log_file} 2>&1 &",
             shell=True,
             env=env
         )
@@ -448,12 +426,16 @@ def cmd_dispatch_executor(args):
         f"Check off tasks in plan as completed.\""
     )
 
+    # Chain trigger-hook for completion
+    orchestrator_path = Path(__file__).resolve()
+    chained_cmd = f"{opencode_cmd} && python \"{orchestrator_path}\" trigger-hook --event on_execution_complete --dir \"{project_root}\""
+
     print(f"Dispatching Minimax M3 Executor in background at worktree '{worktree_path}'...")
     print(f"Log: {log_file}")
 
     if os.name == "nt":
         proc = subprocess.Popen(
-            f"cmd.exe /c \"{opencode_cmd} > {log_file} 2>&1\"",
+            f"cmd.exe /c \"{chained_cmd} > {log_file} 2>&1\"",
             shell=True,
             cwd=worktree_path,
             env=env,
@@ -461,7 +443,7 @@ def cmd_dispatch_executor(args):
         )
     else:
         proc = subprocess.Popen(
-            f"nohup {opencode_cmd} > {log_file} 2>&1 &",
+            f"nohup bash -c '{chained_cmd}' > {log_file} 2>&1 &",
             shell=True,
             cwd=worktree_path,
             env=env
@@ -507,6 +489,10 @@ def main():
     p_set.add_argument("--file", required=True, help="Path to markdown file")
     p_set.add_argument("--status", required=True, help="New status")
 
+    p_trigger = subparsers.add_parser("trigger-hook", help="Trigger an infrastructure hook manually")
+    p_trigger.add_argument("--event", required=True, help="Hook event name (e.g. on_execution_complete)")
+    p_trigger.add_argument("--dir", default="", help="Project root directory")
+
     p_plan = subparsers.add_parser("dispatch-planner", help="Dispatch Kimi K3 planner for a spec")
     p_plan.add_argument("--spec", required=True, help="Path to design spec file")
 
@@ -522,6 +508,8 @@ def main():
         cmd_status(args)
     elif args.command == "set-status":
         cmd_set_status(args)
+    elif args.command == "trigger-hook":
+        cmd_trigger_hook(args)
     elif args.command == "dispatch-planner":
         cmd_dispatch_planner(args)
     elif args.command == "dispatch-executor":
