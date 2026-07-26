@@ -1,15 +1,15 @@
 # <img src="assets/icon.svg" width="24" height="24" alt="Icon"> Superpowers Multi-Agents
 
-> **An enterprise-grade, cost-optimized 4-level LLM multi-agent orchestration framework extending [`obra/superpowers`](https://github.com/obra/superpowers).**
+> **An enterprise-grade, cost-optimized multi-agent orchestration framework extending [`obra/superpowers`](https://github.com/obra/superpowers).**
 
 ![Superpowers Multi-Agents Banner](assets/banner.png)
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)
-![Architecture: 4--Level](https://img.shields.io/badge/Architecture-4--Level-purple.svg)
+![Architecture: N--Level](https://img.shields.io/badge/Architecture-N--Level-purple.svg)
 ![Status: Production--Ready](https://img.shields.io/badge/Status-Production--Ready-brightgreen.svg)
 
-`superpowers-multiagents` separates strategic product design from heavy task planning and TDD code execution. By leveraging specialized LLM cost tiers and non-blocking background CLI execution in [OpenCode](https://github.com/opencode), it cuts token costs by 5x-10x while maintaining strict architectural quality.
+`superpowers-multiagents` separates strategic product design from heavy task planning and TDD code execution. By leveraging specialized LLM cost tiers, configurable CLI harnesses, and non-blocking background execution, it cuts token costs by 5x-10x while maintaining strict architectural quality.
 
 ---
 
@@ -17,42 +17,35 @@
 
 The core [`obra/superpowers`](https://github.com/obra/superpowers) methodology fundamentally transforms coding agents from chaotic code generators into disciplined software engineers:
 
-* 🎯 **Design-First Hard Gates**: Agents are strictly forbidden from writing code or scaffolding projects until a detailed design specification is presented and approved by the human.
-* 🧪 **Rigorous Red/Green TDD**: Enforces writing failing tests first, verifying failure, writing minimal code to make tests pass, and committing frequently.
+* 🎯 **Design-First Hard Gates**: Agents are strictly forbidden from writing code until a detailed design spec is approved by the human.
+* 🧪 **Rigorous Red/Green TDD**: Enforces writing failing tests first, verifying failure, writing minimal code to pass, and committing frequently.
 * ✂️ **Ruthless YAGNI & DRY**: Prevents AI bloat, over-engineering, and premature abstractions.
-* 🧩 **Decomposed Unit Isolation**: Breaks down complex requests into modular, bite-sized components with clear boundaries and interface contracts.
+* 🧩 **Decomposed Unit Isolation**: Breaks down complex requests into modular, bite-sized components with clear boundaries.
 
 ---
 
 ## 🚀 Why Superpowers Multi-Agents?
 
-While Superpowers provides the core engineering discipline, executing large TDD plans solely on frontier models through raw APIs introduces severe cost bottlenecks and timeout crashes. **`superpowers-multiagents`** extends Superpowers into an enterprise-ready, 4-level multi-agent pipeline:
+While Superpowers provides the core engineering discipline, executing large TDD plans solely on frontier models introduces severe cost bottlenecks and timeout crashes. **`superpowers-multiagents`** extends Superpowers into an enterprise-ready, N-level multi-agent pipeline:
 
 > [!TIP]
-> **5x–10x Token Cost Reduction**: By separating high-reasoning strategy from heavy TDD code execution, high-volume token output runs under flat-rate subscriptions (OpenCode Go) while top models focus exclusively on architecture and audit.
+> **5x–10x Token Cost Reduction**: By separating high-reasoning strategy from heavy TDD code execution, high-volume output runs under flat-rate subscriptions while top models focus on architecture and audit.
 
 ### 📊 Comparative Analysis Matrix
 
-| Dimension | 🔴 Traditional API Orchestrators <br/> *(CrewAI, AutoGen, LangGraph)* | ⚡ **Superpowers Multi-Agents** <br/> *(Claude Desktop + OpenCode Go)* | Value & Impact |
+| Dimension | 🔴 Traditional API Orchestrators <br/> *(CrewAI, AutoGen, LangGraph)* | ⚡ **Superpowers Multi-Agents** <br/> *(Claude Desktop + Configurable CLI)* | Value & Impact |
 | :--- | :--- | :--- | :--- |
-| **💰 Billing Model** | **Pure Pay-Per-Token API**<br/>Every loop and test run bills input/output tokens. | **Flat-Rate Subscription**<br/>Heavy execution (Kimi K3 / Minimax M3) runs on OpenCode Go. | **80–90% Cost Reduction** |
-| **🧠 Strategic Layer** | **API Code Loop**<br/>Expensive models used for repetitive text outputs. | **Claude Desktop GUI**<br/>Opus 5 / Fable 5 focus purely on architecture and diff audit. | **High Reasoning, Low Output Cost** |
-| **⚡ Execution Layer** | **Per-Token Metered API**<br/>3,000-line Markdown plans bill heavily per token. | **OpenCode CLI Background Tasks**<br/>Unlimited TDD planning and testing iterations at $0 extra cost. | **Uncapped Code Output** |
-| **🛡 System Stability** | **60-Second Timeout Limits**<br/>Prone to MCP / JSON-RPC `-32001` crashes on long tasks. | **Non-Blocking OS Processes**<br/>Tasks run background OS jobs for 1–2+ hours smoothly. | **Zero Timeout Crashes** |
-| **📄 State Audit** | **Black-Box Database / Memory**<br/>State hidden inside framework memory stores. | **Single Source of Truth**<br/>Human-readable YAML Frontmatter in Markdown files. | **100% Transparency** |
-
-### 📈 Token Cost Benchmark
-
-```text
-Traditional API Frameworks:  [$$$$$$$$$$$$$$$$$$$$] $15 - $30 per Feature Slice
-Superpowers Multi-Agents:   [$$$]               $2 - $5  per Feature Slice  (85% Savings)
-```
+| **💰 Billing Model** | **Pure Pay-Per-Token API**<br/>Every loop and test run bills input/output tokens. | **Flat-Rate Subscription**<br/>Heavy execution runs on configurable CLI harnesses. | **80–90% Cost Reduction** |
+| **🧠 Strategic Layer** | **API Code Loop**<br/>Expensive models used for repetitive text outputs. | **Claude Desktop GUI**<br/>Top models focus purely on architecture and diff audit. | **High Reasoning, Low Cost** |
+| **⚡ Execution Layer** | **Per-Token Metered API**<br/>3,000-line plans bill heavily per token. | **Background CLI Tasks**<br/>Unlimited TDD planning and testing at $0 extra cost. | **Uncapped Code Output** |
+| **🛡 System Stability** | **60-Second Timeout Limits**<br/>Prone to crashes on long tasks. | **Non-Blocking OS Processes**<br/>Tasks run background for 1–2+ hours smoothly. | **Zero Timeout Crashes** |
+| **📄 State Audit** | **Black-Box Database / Memory**<br/>State hidden inside framework memory. | **Single Source of Truth**<br/>Human-readable YAML Frontmatter in Markdown files. | **100% Transparency** |
 
 ---
 
 ## 🏛 Architecture & Workflow
 
-The framework implements a strict 4-level agent hierarchy. High-reasoning top models handle product strategy and code reviews, while fast, cost-effective models generate 3000-line Markdown TDD plans and write code in background CLI tasks.
+The framework implements a configurable N-level agent hierarchy. Agents, harnesses, providers, and models are all defined declaratively in `.superpowers/agents.yaml`. See [docs/architecture.md](docs/architecture.md) for the full module breakdown.
 
 ```mermaid
 flowchart TD
@@ -61,9 +54,9 @@ flowchart TD
         A2["🧠 Agent 2: Opus 5 (Slice Architect & Auditor)"]
     end
 
-    subgraph CLI ["OpenCode CLI (Execution Layer)"]
-        A3["📝 Agent 3: Kimi K3 (TDD Implementation Planner)"]
-        A4["💻 Agent 4: Minimax M3 (TDD Executor & Tester)"]
+    subgraph CLI ["Configurable CLI Harness (Execution Layer)"]
+        A3["📝 Agent 3: Planner (default: Kimi K3)"]
+        A4["💻 Agent 4: Executor (default: Minimax M3)"]
     end
 
     Human["👤 Human Product Owner"] -->|"Milestone Vision"| A1
@@ -71,7 +64,7 @@ flowchart TD
     A2 -->|"Slice Spec"| Human
     Human -->|"SPEC_APPROVED"| A2
 
-    A2 -->|"dispatch-planner"| A3
+    A2 -->|"dispatch-agent --role planner"| A3
     A3 -->|"Plan Output"| A2
     A2 -->|"PLAN_APPROVED"| A4
     A4 -->|"EXECUTION_COMPLETE"| A2
@@ -83,34 +76,33 @@ flowchart TD
 
 ## 🔄 Vertical Slice State Machine
 
-The lifecycle of every feature slice is tracked transparently inside Markdown **YAML Frontmatter** (`docs/superpowers/specs/` and `plans/`).
+The lifecycle of every feature slice is tracked transparently inside Markdown **YAML Frontmatter**. Both statuses and transitions are configurable via `.superpowers/agents.yaml`. See [docs/configuration.md](docs/configuration.md) for the full schema.
 
 | State | Responsible Agent | Action / Gate |
 | :--- | :--- | :--- |
 | `DRAFT_SPEC` | **Opus 5** | Drafting design spec and interface contracts. |
 | `SPEC_APPROVED` | **Human Gate** | Human approves the design spec. |
-| `PLANNING` | **Kimi K3 (OpenCode)** | Background worker generating detailed TDD plan. |
-| `PLAN_GENERATED` | **Kimi K3** | `slice-N-plan.md` written to disk. |
+| `PLANNING` | **Planner (configurable)** | Background worker generating detailed TDD plan. |
+| `PLAN_GENERATED` | **Planner** | `slice-N-plan.md` written to disk. |
 | `PLAN_APPROVED` | **Opus 5 Gate** | Opus 5 audits plan against spec contracts. |
-| `EXECUTING` | **Minimax M3 (OpenCode)**| Background TDD execution (Red ➔ Green ➔ Commit). |
-| `EXECUTION_COMPLETE` | **Minimax M3** | All tasks finished & test suite 100% PASS. |
+| `EXECUTING` | **Executor (configurable)**| Background TDD execution (Red ➔ Green ➔ Commit). |
+| `EXECUTION_COMPLETE` | **Executor** | All tasks finished & test suite 100% PASS. |
 | `VERIFIED_CLOSED` | **Opus 5 Gate** | Opus 5 audits `git diff` and marks slice closed. |
 
 ---
 
 ## 🔌 Generic Project Infrastructure Hooks
 
-To prevent hardcoding infrastructure tools (e.g. Docker, Postgres, LocalStack) inside the plugin, `superpowers-multiagents` provides a **Generic Infrastructure Hook System**.
-
 Projects can optionally define `.superpowers/hooks.yaml` in their repository root to trigger environment isolation and cleanup automatically:
 
 ```yaml
-# Example: .superpowers/hooks.yaml in a project using sandbox-loopback & Docker Compose
+# Example: .superpowers/hooks.yaml
 hooks:
-  on_slice_execution_start:
+  on_slice_planner_start:
+    command: "echo Setting up environment..."
+  on_slice_executor_start:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py up"
-    capture_env: true # Captures LOOPBACK_IP=127.0.0.X into OpenCode process environment
-
+    capture_env: true
   on_slice_verified_closed:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
 ```
@@ -121,51 +113,38 @@ hooks:
 
 ### 1. Installation
 
-Clone or install alongside your existing `obra/superpowers` setup:
-
 ```bash
 git clone https://github.com/your-username/superpowers-multiagents.git
+pip install -r requirements.txt
 ```
 
 ### 2. Check Workflow Status
-
-Inspect the current status of all milestones, tracks, specs, and plans:
 
 ```bash
 python scripts/orchestrator.py status
 ```
 
-### 3. Dispatch Planner
-
-When a design spec reaches `SPEC_APPROVED`:
+### 3. Dispatch Agent (Generic)
 
 ```bash
-# Default model (kimi-k3):
-python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
+# Dispatch any configured agent by role:
+python scripts/orchestrator.py dispatch-agent --role planner --file docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
 
-# Custom model:
-python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md --model gemini-2.5-pro
+# Override model at runtime:
+python scripts/orchestrator.py dispatch-agent --role executor --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --model claude-sonnet-4
 ```
 
-### 4. Approve Plan & Dispatch Executor
+### 4. Legacy Aliases (Backward Compatible)
 
-When Opus 5 audits and approves the generated plan:
+```bash
+python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
+python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
+```
+
+### 5. Set Status & Trigger Hooks
 
 ```bash
 python scripts/orchestrator.py set-status --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --status PLAN_APPROVED
-
-# Default model (minimax-m3):
-python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
-
-# Custom model:
-python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --model claude-sonnet-4
-```
-
-### 5. Trigger Infrastructure Hooks
-
-Manually trigger hooks defined in `.superpowers/hooks.yaml`:
-
-```bash
 python scripts/orchestrator.py trigger-hook --event on_execution_complete --dir .
 ```
 
@@ -173,10 +152,8 @@ python scripts/orchestrator.py trigger-hook --event on_execution_complete --dir 
 
 ## 🧪 Testing
 
-Unit tests use Python's `pytest` framework and verify frontmatter parsing, atomic file writing (`.tmp` ➔ `os.replace`), and hook execution:
-
 ```bash
-python -m pytest tests/test_orchestrator.py
+python -m pytest tests/test_orchestrator.py -v
 ```
 
 ---
@@ -191,6 +168,9 @@ superpowers-multiagents/
 │   ├── banner.png              # Project banner graphic
 │   ├── icon.png                # 24x24 project icon (PNG)
 │   └── icon.svg                # 24x24 project icon (SVG)
+├── docs/
+│   ├── architecture.md         # Module structure & design principles
+│   └── configuration.md        # Full agents.yaml schema reference
 ├── hooks/
 │   ├── hooks.json              # Hook registration
 │   └── session-start           # SessionStart prompt injector
@@ -198,9 +178,21 @@ superpowers-multiagents/
 │   └── multiagent-orchestrator/
 │       └── SKILL.md            # Multi-Agent orchestrator instructions
 ├── scripts/
-│   └── orchestrator.py         # Python CLI Orchestrator & Frontmatter Engine
+│   ├── orchestrator.py         # CLI entry point & command handlers
+│   ├── config.py               # DEFAULT_CONFIG & agents.yaml loader
+│   ├── frontmatter.py          # YAML frontmatter parsing & atomic updates
+│   ├── git_ops.py              # Git worktree & merge operations
+│   ├── hooks.py                # Infrastructure hook execution
+│   ├── locks.py                # File-based slice locking
+│   ├── dependencies.py         # Slice dependency checking
+│   ├── utils.py                # ID validation, YAML conversion, project root
+│   └── adapters/
+│       ├── __init__.py         # Public adapter API
+│       ├── base.py             # HarnessAdapter abstract base class
+│       ├── opencode.py         # OpenCode CLI adapter (default)
+│       └── loader.py           # Dynamic adapter resolution & custom loading
 ├── tests/
-│   └── test_orchestrator.py    # Pytest test suite
+│   └── test_orchestrator.py    # Pytest test suite (36 tests)
 ├── package.json
 ├── requirements.txt            # Python dependencies (ruamel.yaml)
 └── README.md

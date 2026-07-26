@@ -5,22 +5,20 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 import json
-from scripts.orchestrator import (
-    parse_frontmatter,
-    update_frontmatter_status,
-    load_project_hooks,
-    run_infrastructure_hook,
-    check_unmet_dependencies,
-    find_project_root,
-    acquire_slice_lock,
-    release_slice_lock,
-    check_working_tree_clean,
-    _sanitize_id,
-    _to_plain_dict,
-    STATE_TRANSITIONS,
-    DEFAULT_PLANNER_MODEL,
-    DEFAULT_EXECUTOR_MODEL,
-)
+
+from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
+from scripts.hooks import load_project_hooks, run_infrastructure_hook
+from scripts.dependencies import check_unmet_dependencies
+from scripts.utils import find_project_root, _sanitize_id, _to_plain_dict
+from scripts.locks import acquire_slice_lock, release_slice_lock
+from scripts.git_ops import check_working_tree_clean
+from scripts.config import DEFAULT_CONFIG
+
+
+# State machine defaults for tests
+_SM = DEFAULT_CONFIG["state_machine"]
+_VALID = _SM["valid_statuses"]
+_TRANS = _SM["transitions"]
 
 
 # ===== parse_frontmatter =====
@@ -117,7 +115,7 @@ status: DRAFT_SPEC
 # Content
 """, encoding="utf-8")
 
-        assert update_frontmatter_status(spec_file, "SPEC_APPROVED") is True
+        assert update_frontmatter_status(spec_file, "SPEC_APPROVED", _VALID, _TRANS) is True
         
         updated_data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
         assert updated_data["status"] == "SPEC_APPROVED"
@@ -131,7 +129,7 @@ status: DRAFT_SPEC
 ---
 """, encoding="utf-8")
 
-        assert update_frontmatter_status(spec_file, "INVALID_STATE") is False
+        assert update_frontmatter_status(spec_file, "INVALID_STATE", _VALID, _TRANS) is False
 
 
 def test_update_status_forbidden_transition():
@@ -143,7 +141,7 @@ status: DRAFT_SPEC
 ---
 """, encoding="utf-8")
 
-        assert update_frontmatter_status(spec_file, "VERIFIED_CLOSED") is False
+        assert update_frontmatter_status(spec_file, "VERIFIED_CLOSED", _VALID, _TRANS) is False
         # Verify status unchanged
         data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
         assert data["status"] == "DRAFT_SPEC"
@@ -158,7 +156,7 @@ status: SPEC_APPROVED
 ---
 """, encoding="utf-8")
 
-        assert update_frontmatter_status(spec_file, "EXECUTION_COMPLETE") is False
+        assert update_frontmatter_status(spec_file, "EXECUTION_COMPLETE", _VALID, _TRANS) is False
 
 
 def test_update_status_merge_conflict_reachable_from_executing():
@@ -170,14 +168,14 @@ status: EXECUTING
 ---
 """, encoding="utf-8")
 
-        assert update_frontmatter_status(spec_file, "MERGE_CONFLICT") is True
+        assert update_frontmatter_status(spec_file, "MERGE_CONFLICT", _VALID, _TRANS) is True
         data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
         assert data["status"] == "MERGE_CONFLICT"
 
 
 def test_update_status_file_not_found():
     """Updating a non-existent file should return False."""
-    result = update_frontmatter_status(Path("/nonexistent/file.md"), "DRAFT_SPEC")
+    result = update_frontmatter_status(Path("/nonexistent/file.md"), "DRAFT_SPEC", _VALID, _TRANS)
     assert result is False
 
 
@@ -197,7 +195,7 @@ depends_on:
 # Body content that must survive
 """, encoding="utf-8")
 
-        update_frontmatter_status(spec_file, "SPEC_APPROVED")
+        update_frontmatter_status(spec_file, "SPEC_APPROVED", _VALID, _TRANS)
         data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
 
         assert data["title"] == "Important Feature"
@@ -225,7 +223,7 @@ status: DRAFT_SPEC
         ]
 
         for target_status in transitions:
-            assert update_frontmatter_status(spec_file, target_status) is True, \
+            assert update_frontmatter_status(spec_file, target_status, _VALID, _TRANS) is True, \
                 f"Transition to {target_status} should succeed"
 
         data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
@@ -333,8 +331,8 @@ depends_on:
         assert "slice-01-base" in unmet[0]
 
         # Update base to VERIFIED_CLOSED through valid transitions
-        update_frontmatter_status(dep_spec, "EXECUTION_COMPLETE")
-        update_frontmatter_status(dep_spec, "VERIFIED_CLOSED")
+        update_frontmatter_status(dep_spec, "EXECUTION_COMPLETE", _VALID, _TRANS)
+        update_frontmatter_status(dep_spec, "VERIFIED_CLOSED", _VALID, _TRANS)
         unmet_after = check_unmet_dependencies(target_spec)
         assert len(unmet_after) == 0
 
@@ -421,7 +419,7 @@ def test_create_git_worktree_rejects_malicious_id():
 
 def create_git_worktree_safe(slice_id):
     """Helper to test create_git_worktree with sanitization."""
-    from scripts.orchestrator import create_git_worktree
+    from scripts.git_ops import create_git_worktree
     with tempfile.TemporaryDirectory() as tmpdir:
         create_git_worktree(slice_id, project_root=Path(tmpdir))
 
@@ -450,7 +448,7 @@ def test_cmd_summary(capsys):
             os.chdir(original_cwd)
 
         captured = capsys.readouterr()
-        assert "AUDIT SUMMARY FOR SLICE: slice-01-auth" in captured.out
+        assert "slice-01-auth" in captured.out
         assert "Line 99: test output" in captured.out
         # Should only show last 50 lines
         assert "Line 49: test output" not in captured.out
@@ -495,7 +493,7 @@ def test_update_frontmatter_with_bom():
         spec_file = Path(tmpdir) / "bom-test.md"
         spec_file.write_text("\ufeff---\nstatus: DRAFT_SPEC\n---\n\n# Content\n", encoding="utf-8-sig")
 
-        assert update_frontmatter_status(spec_file, "SPEC_APPROVED") is True
+        assert update_frontmatter_status(spec_file, "SPEC_APPROVED", _VALID, _TRANS) is True
         data = parse_frontmatter(spec_file.read_text(encoding="utf-8"))
         assert data["status"] == "SPEC_APPROVED"
 
@@ -563,6 +561,33 @@ def test_acquire_lock_cleans_stale_lock():
 # ===== Model defaults =====
 
 def test_default_model_constants():
-    """Default model constants should be defined."""
-    assert DEFAULT_PLANNER_MODEL == "kimi-k3"
-    assert DEFAULT_EXECUTOR_MODEL == "minimax-m3"
+    """Default model constants should be defined in DEFAULT_CONFIG."""
+    assert DEFAULT_CONFIG["agents"]["planner"]["model"] == "kimi-k3"
+    assert DEFAULT_CONFIG["agents"]["executor"]["model"] == "minimax-m3"
+
+
+# ===== Adapter =====
+
+def test_opencode_adapter_build_command():
+    """OpenCodeAdapter should produce a correct opencode CLI command."""
+    from scripts.adapters.opencode import OpenCodeAdapter
+
+    adapter = OpenCodeAdapter()
+    config = {"model": "kimi-k3", "provider": "opencode-go", "extra_args": []}
+    cmd = adapter.build_command(config, "Do something")
+    assert cmd.startswith("opencode run --model kimi-k3")
+    assert '"Do something"' in cmd
+
+
+def test_opencode_adapter_with_extra_args():
+    """OpenCodeAdapter should interpolate extra_args correctly."""
+    from scripts.adapters.opencode import OpenCodeAdapter
+
+    adapter = OpenCodeAdapter()
+    config = {
+        "model": "kimi-k3",
+        "provider": "opencode-go",
+        "extra_args": ["--provider {provider}"]
+    }
+    cmd = adapter.build_command(config, "Test prompt")
+    assert "--provider opencode-go" in cmd
