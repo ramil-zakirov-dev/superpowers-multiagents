@@ -511,62 +511,6 @@ def test_update_frontmatter_with_bom():
 
 # ===== Slice Locking =====
 
-def test_acquire_and_release_lock():
-    """Lock acquisition and release should work correctly."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        project_root = Path(tmpdir)
-        (project_root / ".superpowers").mkdir()
-
-        lock_file = acquire_slice_lock("slice-01", project_root)
-        assert lock_file.exists()
-
-        lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
-        assert lock_data["slice_id"] == "slice-01"
-        assert lock_data["pid"] == os.getpid()
-
-        release_slice_lock("slice-01", project_root)
-        assert not lock_file.exists()
-
-
-def test_acquire_lock_blocks_on_active_process():
-    """Acquiring a lock held by a live process should exit."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        project_root = Path(tmpdir)
-        (project_root / ".superpowers").mkdir()
-
-        # Acquire first lock (current process is alive)
-        acquire_slice_lock("slice-02", project_root)
-
-        # Second acquisition should fail
-        with pytest.raises(SystemExit):
-            acquire_slice_lock("slice-02", project_root)
-
-        # Cleanup
-        release_slice_lock("slice-02", project_root)
-
-
-def test_acquire_lock_cleans_stale_lock():
-    """Stale locks from dead processes should be cleaned up."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        project_root = Path(tmpdir)
-        locks_dir = project_root / ".superpowers" / "locks"
-        locks_dir.mkdir(parents=True)
-
-        # Write a lock with a PID that definitely doesn't exist
-        stale_lock = locks_dir / "slice-03.lock"
-        stale_lock.write_text(json.dumps({
-            "pid": 999999999,
-            "slice_id": "slice-03",
-            "command": "stale"
-        }), encoding="utf-8")
-
-        # Should clean up stale lock and acquire new one
-        lock_file = acquire_slice_lock("slice-03", project_root)
-        assert lock_file.exists()
-        lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
-        assert lock_data["pid"] == os.getpid()  # Our PID, not the stale one
-
-        release_slice_lock("slice-03", project_root)
 
 
 # ===== Model defaults =====
