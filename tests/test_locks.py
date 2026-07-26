@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 
 import pytest
@@ -75,3 +76,46 @@ def test_release_is_idempotent(tmp_path):
     release_slice_lock_file(lock_file)
     assert not lock_file.exists()
     release_slice_lock("slice-01", tmp_path)
+
+
+def test_writes_never_leave_a_stray_temp_file(tmp_path):
+    """acquire + claim + release must not leak the sibling .lock-tmp-* file
+    each atomic write stages content through."""
+    lock_file = acquire_slice_lock("slice-01", tmp_path)
+    claim_slice_lock(lock_file, os.getpid())
+    release_slice_lock_file(lock_file)
+    assert list(lock_file.parent.glob(".lock-tmp-*")) == []
+
+
+def test_concurrent_acquire_claim_release_never_crashes(tmp_path):
+    """Regression for the race a task-5 review reproduced: hammering
+    acquire/claim/release for the same slice_id from many threads used to
+    let a racing acquire misread a live, mid-write lock as corrupt and
+    unlink it out from under its owner (a crash on Windows, a silent
+    double-acquisition on POSIX). Atomic staged writes close this — no
+    reader can ever observe a partial write, only fully-old or fully-new
+    content."""
+    errors = []
+    lock = threading.Lock()
+
+    def hammer():
+        for _ in range(30):
+            try:
+                lock_file = acquire_slice_lock("slice-01", tmp_path)
+            except LockError:
+                continue
+            try:
+                claim_slice_lock(lock_file, os.getpid())
+            except Exception as exc:  # pragma: no cover - failure path
+                with lock:
+                    errors.append(exc)
+            finally:
+                release_slice_lock_file(lock_file)
+
+    threads = [threading.Thread(target=hammer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []

@@ -4,11 +4,24 @@ Acquisition and ownership are separate. The dispatcher creates the lock
 atomically and exits; the supervisor it spawns claims the lock with its own
 PID and holds it for the run. A `starting` lock is honoured for a bounded
 grace window so the gap between those two events is not a hole.
+
+Every write to the lock file is staged through a sibling temp file and made
+visible with a single atomic filesystem call (`os.link` for a brand-new
+lock, `os.replace` for an update to an existing one). A reader can therefore
+only ever observe the lock file fully absent, fully at its previous content,
+or fully at its new content — never a truncated or empty in-progress write.
+Without that, a lock being claimed by its legitimate, live owner can be
+misread by a racing `acquire_slice_lock` as corrupt (an empty read parses to
+`{}`, which `_lock_is_held` reports as not-held) and reclaimed out from
+under it — on Windows this crashes the reclaimer with a `PermissionError`
+because the owner still has the destination path open; on POSIX it silently
+double-acquires the slice.
 """
 
 import json
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -21,16 +34,74 @@ LOCK_START_GRACE_SECONDS = 60
 
 _MAX_RECLAIM_ATTEMPTS = 3
 
+#: Bounded retry for a transient Windows sharing violation: another thread
+#: or process can briefly hold the lock file open (e.g. mid-read, or the
+#: brief "pending delete" window Windows leaves between an unlink and the
+#: path truly becoming free) at the exact instant a link/replace/unlink
+#: targets it. POSIX never raises this; on Windows it is retried with
+#: exponential backoff before being treated as a real error. The total
+#: budget (~1.3s worst case over 8 attempts) is generous enough to absorb
+#: antivirus/indexer scans on a freshly written file without masking a
+#: genuinely stuck lock for long.
+_TRANSIENT_RETRY_ATTEMPTS = 10
+_TRANSIENT_RETRY_BASE_DELAY_SECONDS = 0.01
+
+
+def _retry_on_sharing_violation(func, *args, **kwargs):
+    for attempt in range(_TRANSIENT_RETRY_ATTEMPTS):
+        try:
+            return func(*args, **kwargs)
+        except PermissionError:
+            if attempt == _TRANSIENT_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_TRANSIENT_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+
 
 def _lock_is_held(data: dict) -> bool:
     state = data.get("state")
     if state == "running":
         pid = data.get("pid")
-        return bool(pid) and _is_process_alive(int(pid))
+        if not pid:
+            return False
+        try:
+            return _is_process_alive(int(pid))
+        except (TypeError, ValueError):
+            return False
     if state == "starting":
-        started_at = data.get("started_at") or 0
-        return (time.time() - float(started_at)) < LOCK_START_GRACE_SECONDS
+        try:
+            started_at = float(data.get("started_at") or 0)
+        except (TypeError, ValueError):
+            return False
+        return (time.time() - started_at) < LOCK_START_GRACE_SECONDS
     return False
+
+
+def _stage_payload(parent: Path, payload: dict) -> str:
+    """Write `payload` to a fully-formed sibling temp file. Returns its path."""
+    fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=".lock-tmp-")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    return tmp_name
+
+
+def _write_new(lock_file: Path, payload: dict) -> None:
+    """Make `payload` visible at `lock_file`, atomically, only if absent.
+
+    Raises FileExistsError if the destination already exists — the same
+    exclusivity `os.O_CREAT | os.O_EXCL` would give, but the content is
+    fully written before it ever becomes visible under that name.
+    """
+    tmp_name = _stage_payload(lock_file.parent, payload)
+    try:
+        _retry_on_sharing_violation(os.link, tmp_name, lock_file)
+    finally:
+        _retry_on_sharing_violation(os.unlink, tmp_name)
+
+
+def _write_replace(lock_file: Path, payload: dict) -> None:
+    """Make `payload` visible at `lock_file`, atomically, overwriting any prior content."""
+    tmp_name = _stage_payload(lock_file.parent, payload)
+    _retry_on_sharing_violation(os.replace, tmp_name, lock_file)
 
 
 def acquire_slice_lock(slice_id: str, project_root: Path) -> Path:
@@ -53,7 +124,7 @@ def acquire_slice_lock(slice_id: str, project_root: Path) -> Path:
 
     for _ in range(_MAX_RECLAIM_ATTEMPTS):
         try:
-            fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            _write_new(lock_file, payload)
         except FileExistsError:
             try:
                 existing = json.loads(lock_file.read_text(encoding="utf-8"))
@@ -65,11 +136,16 @@ def acquire_slice_lock(slice_id: str, project_root: Path) -> Path:
                     f"(state={existing.get('state')}, pid={existing.get('pid')}, "
                     f"command={existing.get('command', 'unknown')})."
                 )
-            lock_file.unlink(missing_ok=True)
+            try:
+                _retry_on_sharing_violation(lock_file.unlink, missing_ok=True)
+            except OSError:
+                # Lost the reclaim race to another contender; the next
+                # attempt's atomic create will fail again if they won, or
+                # succeed if the slot is clear.
+                pass
             continue
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-        return lock_file
+        else:
+            return lock_file
 
     raise LockError(
         f"Could not acquire lock for slice '{slice_id}' after "
@@ -87,12 +163,12 @@ def claim_slice_lock(lock_file: Path, pid: int, **meta) -> None:
     data.update(meta)
     data["pid"] = pid
     data["state"] = "running"
-    lock_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_replace(lock_file, data)
 
 
 def release_slice_lock_file(lock_file: Path) -> None:
     """Remove a lock by path. Safe to call more than once."""
-    Path(lock_file).unlink(missing_ok=True)
+    _retry_on_sharing_violation(Path(lock_file).unlink, missing_ok=True)
 
 
 def release_slice_lock(slice_id: str, project_root: Path) -> None:
