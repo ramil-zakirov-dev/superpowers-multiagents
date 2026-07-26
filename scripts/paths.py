@@ -46,8 +46,19 @@ def is_artifact_path(rel_path: str) -> bool:
 
     Note the explicit `./` handling: `str.lstrip("./")` would strip the
     leading dot of `.superpowers/` and silently stop matching.
+
+    When git reports an untracked directory like `.superpowers/`, this function
+    recognizes it as an artifact if it's a parent directory of known artifact paths.
     """
     normalized = rel_path.replace("\\", "/")
     if normalized.startswith("./"):
         normalized = normalized[2:]
-    return any(normalized.startswith(prefix) for prefix in ARTIFACT_PREFIXES)
+
+    # Direct match: path is a known artifact prefix
+    if any(normalized.startswith(prefix) for prefix in ARTIFACT_PREFIXES):
+        return True
+
+    # Parent directory match: git reported the parent, check if it contains artifacts
+    # e.g., git reports "?? .superpowers/" but we know ".superpowers/logs/" is an artifact
+    normalized_with_slash = normalized if normalized.endswith("/") else normalized + "/"
+    return any(prefix.startswith(normalized_with_slash) for prefix in ARTIFACT_PREFIXES)
