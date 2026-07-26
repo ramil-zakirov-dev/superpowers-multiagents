@@ -523,26 +523,42 @@ def test_default_model_constants():
 
 # ===== Adapter =====
 
-def test_opencode_adapter_build_command():
-    """OpenCodeAdapter should produce a correct opencode CLI command."""
+def test_opencode_adapter_returns_argv_list():
+    """shell=False dispatch requires an argv list, not a shell string."""
     from scripts.adapters.opencode import OpenCodeAdapter
 
     adapter = OpenCodeAdapter()
     config = {"model": "kimi-k3", "provider": "opencode-go", "extra_args": []}
-    cmd = adapter.build_command(config, "Do something")
-    assert cmd.startswith("opencode run --model kimi-k3")
-    assert '"Do something"' in cmd
+    argv = adapter.build_command(config, "Do something")
+    assert isinstance(argv, list)
+    assert all(isinstance(part, str) for part in argv)
+    assert argv == ["opencode", "run", "--model", "opencode-go/kimi-k3", "Do something"]
+
+
+def test_opencode_adapter_passes_provider_with_model():
+    """The provider was silently dropped under the default empty extra_args."""
+    from scripts.adapters.opencode import OpenCodeAdapter
+
+    argv = OpenCodeAdapter().build_command(
+        {"model": "minimax-m3", "provider": "opencode-go", "extra_args": []}, "Task"
+    )
+    assert "opencode-go/minimax-m3" in argv
 
 
 def test_opencode_adapter_with_extra_args():
-    """OpenCodeAdapter should interpolate extra_args correctly."""
     from scripts.adapters.opencode import OpenCodeAdapter
 
-    adapter = OpenCodeAdapter()
-    config = {
-        "model": "kimi-k3",
-        "provider": "opencode-go",
-        "extra_args": ["--provider {provider}"]
-    }
-    cmd = adapter.build_command(config, "Test prompt")
-    assert "--provider opencode-go" in cmd
+    argv = OpenCodeAdapter().build_command(
+        {"model": "kimi-k3", "provider": "opencode-go", "extra_args": ["--provider={provider}"]},
+        "Test prompt",
+    )
+    assert "--provider=opencode-go" in argv
+
+
+def test_prompt_is_a_single_argv_element_not_shell_quoted():
+    """A prompt containing quotes must survive verbatim — no shell involved."""
+    from scripts.adapters.opencode import OpenCodeAdapter
+
+    prompt = """Read C:\\path\\file.md and say "hello" — don't quote it"""
+    argv = OpenCodeAdapter().build_command({"model": "m", "provider": "p"}, prompt)
+    assert argv[-1] == prompt
