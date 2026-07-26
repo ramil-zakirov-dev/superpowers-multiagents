@@ -74,3 +74,58 @@ def test_malformed_yaml_fails_closed(tmp_path):
     _write_config(tmp_path, "agents: [this is: broken\n")
     with pytest.raises(ConfigError):
         load_agent_config(tmp_path)
+
+
+from scripts.config import KNOWN_AGENT_KEYS, validate_config
+
+
+def test_failed_status_exists_and_is_reachable():
+    sm = DEFAULT_CONFIG["state_machine"]
+    assert "FAILED" in sm["valid_statuses"]
+    assert "FAILED" in sm["transitions"]["PLANNING"]
+    assert "FAILED" in sm["transitions"]["EXECUTING"]
+
+
+def test_failed_returns_to_the_gate_it_came_from():
+    assert set(DEFAULT_CONFIG["state_machine"]["transitions"]["FAILED"]) == {
+        "SPEC_APPROVED",
+        "PLAN_APPROVED",
+    }
+
+
+def test_agents_declare_success_status():
+    agents = DEFAULT_CONFIG["agents"]
+    assert agents["planner"]["success_status"] == "PLAN_GENERATED"
+    assert agents["executor"]["success_status"] == "EXECUTION_COMPLETE"
+
+
+def test_default_config_validates():
+    validate_config(DEFAULT_CONFIG)
+
+
+def test_validate_rejects_status_outside_valid_statuses(tmp_path):
+    _write_config(tmp_path, "agents:\n  planner:\n    in_progress_status: NONSENSE\n")
+    with pytest.raises(ConfigError, match="NONSENSE"):
+        validate_config(load_agent_config(tmp_path))
+
+
+def test_validate_rejects_unknown_agent_key(tmp_path):
+    _write_config(tmp_path, "agents:\n  planner:\n    modle: typo\n")
+    with pytest.raises(ConfigError, match="modle"):
+        validate_config(load_agent_config(tmp_path))
+
+
+def test_validate_rejects_unknown_transition_target(tmp_path):
+    _write_config(tmp_path, "state_machine:\n  transitions:\n    DRAFT_SPEC: [NOWHERE]\n")
+    with pytest.raises(ConfigError, match="NOWHERE"):
+        validate_config(load_agent_config(tmp_path))
+
+
+def test_validate_rejects_empty_valid_statuses():
+    with pytest.raises(ConfigError, match="valid_statuses"):
+        validate_config({"state_machine": {"valid_statuses": [], "transitions": {}}, "agents": {}})
+
+
+def test_known_agent_keys_cover_the_documented_schema():
+    assert "success_status" in KNOWN_AGENT_KEYS
+    assert "harness_adapter" in KNOWN_AGENT_KEYS

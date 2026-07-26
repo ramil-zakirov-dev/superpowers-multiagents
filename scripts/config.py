@@ -26,16 +26,17 @@ DEFAULT_CONFIG = {
         "valid_statuses": [
             "DRAFT_SPEC", "SPEC_APPROVED", "PLANNING", "PLAN_GENERATED",
             "PLAN_APPROVED", "EXECUTING", "EXECUTION_COMPLETE",
-            "MERGE_CONFLICT", "VERIFIED_CLOSED"
+            "MERGE_CONFLICT", "FAILED", "VERIFIED_CLOSED"
         ],
         "transitions": {
             "DRAFT_SPEC": ["SPEC_APPROVED"],
             "SPEC_APPROVED": ["PLANNING", "DRAFT_SPEC"],
-            "PLANNING": ["PLAN_GENERATED"],
+            "PLANNING": ["PLAN_GENERATED", "FAILED"],
             "PLAN_GENERATED": ["PLAN_APPROVED", "PLANNING"],
             "PLAN_APPROVED": ["EXECUTING", "PLAN_GENERATED"],
-            "EXECUTING": ["EXECUTION_COMPLETE", "MERGE_CONFLICT"],
+            "EXECUTING": ["EXECUTION_COMPLETE", "MERGE_CONFLICT", "FAILED"],
             "EXECUTION_COMPLETE": ["VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"],
+            "FAILED": ["SPEC_APPROVED", "PLAN_APPROVED"],
             "VERIFIED_CLOSED": [],
             "MERGE_CONFLICT": ["VERIFIED_CLOSED", "EXECUTING", "PLAN_APPROVED"]
         }
@@ -47,6 +48,7 @@ DEFAULT_CONFIG = {
             "provider": "opencode-go",
             "allowed_statuses": ["SPEC_APPROVED"],
             "in_progress_status": "PLANNING",
+            "success_status": "PLAN_GENERATED",
             "isolated_worktree": False,
             "prompt_template": "Read spec at {file} and create detailed TDD implementation plan using writing-plans skill. Save to docs/superpowers/plans/",
             "extra_args": []
@@ -57,6 +59,7 @@ DEFAULT_CONFIG = {
             "provider": "opencode-go",
             "allowed_statuses": ["PLAN_APPROVED"],
             "in_progress_status": "EXECUTING",
+            "success_status": "EXECUTION_COMPLETE",
             "isolated_worktree": True,
             "prompt_template": "Execute implementation plan at {file} using TDD subagent execution. Check off tasks in plan as completed.",
             "extra_args": []
@@ -115,3 +118,62 @@ def resolve_agent(config: dict, role: str) -> dict:
     if "provider" not in agent and harness.get("provider"):
         agent["provider"] = harness["provider"]
     return agent
+
+
+KNOWN_AGENT_KEYS = frozenset({
+    "model",
+    "harness",
+    "provider",
+    "allowed_statuses",
+    "in_progress_status",
+    "success_status",
+    "isolated_worktree",
+    "prompt_template",
+    "extra_args",
+    "harness_adapter",
+})
+
+
+def validate_config(config: dict) -> None:
+    """Fail closed on a configuration that cannot work.
+
+    Catching a typo here is the difference between a readable error and an
+    agent dispatched with a silently disabled state gate.
+    """
+    state_machine = config.get("state_machine") or {}
+    valid_statuses = state_machine.get("valid_statuses") or []
+    if not valid_statuses:
+        raise ConfigError("state_machine.valid_statuses is missing or empty.")
+    known = set(valid_statuses)
+
+    for source, targets in (state_machine.get("transitions") or {}).items():
+        if source not in known:
+            raise ConfigError(
+                f"state_machine.transitions: unknown source status '{source}'. "
+                f"Known statuses: {sorted(known)}"
+            )
+        for target in targets or []:
+            if target not in known:
+                raise ConfigError(
+                    f"state_machine.transitions['{source}']: unknown target status "
+                    f"'{target}'. Known statuses: {sorted(known)}"
+                )
+
+    for role, agent in (config.get("agents") or {}).items():
+        unknown_keys = set(agent) - KNOWN_AGENT_KEYS
+        if unknown_keys:
+            raise ConfigError(
+                f"agent '{role}': unknown key(s) {sorted(unknown_keys)}. "
+                f"Known keys: {sorted(KNOWN_AGENT_KEYS)}"
+            )
+        for key in ("in_progress_status", "success_status"):
+            value = agent.get(key)
+            if value is not None and value not in known:
+                raise ConfigError(
+                    f"agent '{role}'.{key} = '{value}' is not in valid_statuses."
+                )
+        for status in agent.get("allowed_statuses") or []:
+            if status not in known:
+                raise ConfigError(
+                    f"agent '{role}'.allowed_statuses contains unknown status '{status}'."
+                )
