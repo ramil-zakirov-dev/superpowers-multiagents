@@ -22,8 +22,11 @@ def test_lock_path_is_under_superpowers():
     assert lock_path(root, "slice-01") == root / ".superpowers" / "locks" / "slice-01.lock"
 
 
-def test_dirs_are_derived_from_project_root_not_cwd():
-    root = Path("/some/other/place")
+def test_dirs_are_derived_from_project_root_not_cwd(tmp_path):
+    # tmp_path is a genuinely absolute path on the current platform;
+    # a hardcoded POSIX literal like "/some/other/place" is not absolute
+    # on Windows, which is what this test needs to guard against.
+    root = tmp_path / "some" / "other" / "place"
     assert logs_dir(root).is_absolute()
     assert locks_dir(root).is_absolute()
     assert str(logs_dir(root)).startswith(str(root))
