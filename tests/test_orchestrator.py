@@ -239,13 +239,13 @@ def test_load_project_hooks():
         sp_dir.mkdir()
         hooks_file = sp_dir / "hooks.yaml"
         hooks_file.write_text("""hooks:
-  on_slice_execution_start:
+  on_slice_executor_start:
     command: "echo test"
 """, encoding="utf-8")
 
         hooks = load_project_hooks(project_root)
-        assert "on_slice_execution_start" in hooks
-        assert hooks["on_slice_execution_start"]["command"] == "echo test"
+        assert "on_slice_executor_start" in hooks
+        assert hooks["on_slice_executor_start"]["command"] == "echo test"
 
 
 def test_load_project_hooks_returns_plain_dict():
@@ -282,12 +282,12 @@ def test_run_infrastructure_hook():
         sp_dir.mkdir()
         hooks_file = sp_dir / "hooks.yaml"
         hooks_file.write_text("""hooks:
-  on_slice_execution_start:
+  on_slice_executor_start:
     command: "echo LOOPBACK_IP=127.0.0.9"
     capture_env: true
 """, encoding="utf-8")
 
-        env = run_infrastructure_hook("on_slice_execution_start", project_root=project_root)
+        env = run_infrastructure_hook("on_slice_executor_start", project_root=project_root)
         assert env.get("LOOPBACK_IP") == "127.0.0.9"
 
 
