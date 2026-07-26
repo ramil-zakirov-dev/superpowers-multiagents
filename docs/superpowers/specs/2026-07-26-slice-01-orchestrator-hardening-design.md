@@ -351,14 +351,27 @@ Three independent layers, all required:
    `README.md` address the orchestrator by absolute path; the working directory
    stays the user's project.
 3. **Path injection.** `hooks/session-start` already computes `PLUGIN_ROOT`. It
-   substitutes a placeholder token in the skill text with the resolved absolute
-   path before injecting it.
+   prepends one resolved line to the injected skill text naming the absolute
+   orchestrator path.
 
-Layer 3 carries an **open question**: it is not established whether Claude Code
-interpolates `${CLAUDE_PLUGIN_ROOT}` inside a skill body loaded through the Skill
-tool (it certainly does inside hooks). The implementation plan must verify this
-empirically **before** building the placeholder machinery. If interpolation
-works, layers 1 and 2 suffice and layer 3 is dropped.
+**Resolution of the open question (investigated 2026-07-26).** The mechanism is
+not `${CLAUDE_PLUGIN_ROOT}` interpolation. The Skill tool announces the skill's
+absolute location to the model on load (`Base directory for this skill: <abs>`),
+and upstream skills address their bundled scripts relative to it — no official
+`SKILL.md` in the installed plugin cache references `${CLAUDE_PLUGIN_ROOT}` in
+its body. The placeholder-substitution machinery is therefore dropped.
+
+This leaves one real gap, which layer 3 exists to close: a skill has **two
+consumption paths**, and only one of them announces a base directory.
+
+| Path | Base directory available? | Resolution |
+|---|---|---|
+| Loaded via the Skill tool | yes, announced by the harness | paths relative to the skill directory |
+| Injected by `session-start` as `additionalContext` | **no** | absolute path prepended by the hook |
+
+`SKILL.md` therefore states both: resolve `../../scripts/orchestrator.py`
+relative to this skill's announced base directory, and prefer the absolute path
+given at the top of the text when it was injected at session start.
 
 ### 4.9 Adapter
 
@@ -431,7 +444,7 @@ would have caught it (4.7) arrive together.
 
 | Risk | Mitigation |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}` interpolation in skill bodies is unverified | Verification is the first task of the plan; the design branches on its result (4.8) |
+| ~~`${CLAUDE_PLUGIN_ROOT}` interpolation in skill bodies is unverified~~ | RESOLVED 2026-07-26 — see 4.8; placeholder machinery dropped, two consumption paths handled explicitly |
 | Detached-process semantics differ across platforms | Runner spawn is covered by tests on the development platform; POSIX flags follow the documented `start_new_session` contract |
 | `FAILED` is a breaking config change | Accepted deliberately: no working installations exist; version becomes `2.0.0` |
 | Deep merge changes behaviour for a config that relied on wholesale replacement | No such config exists in the wild; validation reports what it resolved |
