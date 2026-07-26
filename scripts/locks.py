@@ -39,10 +39,13 @@ _MAX_RECLAIM_ATTEMPTS = 3
 #: brief "pending delete" window Windows leaves between an unlink and the
 #: path truly becoming free) at the exact instant a link/replace/unlink
 #: targets it. POSIX never raises this; on Windows it is retried with
-#: exponential backoff before being treated as a real error. The total
-#: budget (~1.3s worst case over 8 attempts) is generous enough to absorb
-#: antivirus/indexer scans on a freshly written file without masking a
-#: genuinely stuck lock for long.
+#: exponential backoff before being treated as a real error. Worst case for
+#: one call is ~5.1s (9 sleeps of 0.01 * 2^k, k=0..8); acquire_slice_lock can
+#: invoke up to _MAX_RECLAIM_ATTEMPTS such calls, so a lock that is
+#: genuinely, persistently wedged at the filesystem level (not just
+#: contended) can take tens of seconds to fail rather than failing fast.
+#: That trade-off is deliberate: a false "corrupt, reclaim it" verdict during
+#: a transient scan is worse than a slow, honest failure.
 _TRANSIENT_RETRY_ATTEMPTS = 10
 _TRANSIENT_RETRY_BASE_DELAY_SECONDS = 0.01
 
@@ -95,7 +98,15 @@ def _write_new(lock_file: Path, payload: dict) -> None:
     try:
         _retry_on_sharing_violation(os.link, tmp_name, lock_file)
     finally:
-        _retry_on_sharing_violation(os.unlink, tmp_name)
+        # Best-effort cleanup only: if this itself hits a sharing violation
+        # that exhausts its own retries, that failure must not shadow
+        # whatever `os.link` raised (typically the meaningful, expected
+        # FileExistsError of a contended lock) — an orphaned temp file is
+        # harmless debris, but losing the real exception is not.
+        try:
+            _retry_on_sharing_violation(os.unlink, tmp_name)
+        except OSError:
+            pass
 
 
 def _write_replace(lock_file: Path, payload: dict) -> None:

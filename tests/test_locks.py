@@ -95,22 +95,28 @@ def test_concurrent_acquire_claim_release_never_crashes(tmp_path):
     double-acquisition on POSIX). Atomic staged writes close this — no
     reader can ever observe a partial write, only fully-old or fully-new
     content."""
+    # Every step is guarded, not just claim_slice_lock: an exception raised
+    # inside a thread target is otherwise only printed by the default
+    # threading excepthook and never reaches the joining thread, so a
+    # narrower try/except here would let the exact regression this test is
+    # named for pass silently.
     errors = []
     lock = threading.Lock()
 
     def hammer():
         for _ in range(30):
             try:
-                lock_file = acquire_slice_lock("slice-01", tmp_path)
-            except LockError:
-                continue
-            try:
-                claim_slice_lock(lock_file, os.getpid())
+                try:
+                    lock_file = acquire_slice_lock("slice-01", tmp_path)
+                except LockError:
+                    continue
+                try:
+                    claim_slice_lock(lock_file, os.getpid())
+                finally:
+                    release_slice_lock_file(lock_file)
             except Exception as exc:  # pragma: no cover - failure path
                 with lock:
                     errors.append(exc)
-            finally:
-                release_slice_lock_file(lock_file)
 
     threads = [threading.Thread(target=hammer) for _ in range(4)]
     for t in threads:
