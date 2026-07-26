@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+from scripts.errors import ValidationError
+
 logger = logging.getLogger("orchestrator")
 
 # Regex for validating slice_id / branch names
@@ -15,11 +17,12 @@ SAFE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
 def _sanitize_id(value: str, label: str = "ID") -> str:
-    """Validates that a string is safe for use in shell commands and git branch names."""
+    """Validates that a string is safe for use in git branch names and paths."""
     if not SAFE_ID_PATTERN.match(value):
-        print(f"Error: {label} '{value}' contains invalid characters. "
-              f"Only alphanumeric, hyphens, underscores, and dots are allowed.")
-        sys.exit(1)
+        raise ValidationError(
+            f"{label} '{value}' contains invalid characters. "
+            f"Only alphanumeric characters, hyphens, underscores and dots are allowed."
+        )
     return value
 
 
