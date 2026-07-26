@@ -6,9 +6,13 @@ provide full backward compatibility: OpenCode harness, opencode-go
 provider, Kimi K3 planner, Minimax M3 executor.
 """
 
+import copy
 import logging
 from pathlib import Path
+
 from ruamel.yaml import YAML
+
+from scripts.errors import ConfigError
 from scripts.utils import _to_plain_dict
 
 logger = logging.getLogger("orchestrator")
@@ -61,28 +65,53 @@ DEFAULT_CONFIG = {
 }
 
 
-def load_agent_config(project_root: Path) -> dict:
-    """Load agent configuration from .superpowers/agents.yaml.
+def deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge `override` into a copy of `base`.
 
-    Merges the project-specific config with DEFAULT_CONFIG.
-    Returns a tuple of (config_dict, valid_statuses, state_transitions).
+    Mappings merge key by key so that a partial override inherits the rest of
+    the defaults. Scalars and lists are replaced wholesale — a user who lists
+    `allowed_statuses` means exactly that list, not an addition to ours.
     """
-    import copy
-    config = copy.deepcopy(DEFAULT_CONFIG)
-    config_file = project_root / ".superpowers" / "agents.yaml"
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
-    if config_file.exists():
-        try:
-            yaml = YAML(typ='rt')
-            parsed = yaml.load(config_file.read_text(encoding="utf-8")) or {}
-            parsed_dict = _to_plain_dict(parsed)
-            if "harness" in parsed_dict:
-                config["harness"].update(parsed_dict["harness"])
-            if "state_machine" in parsed_dict:
-                config["state_machine"] = parsed_dict["state_machine"]
-            if "agents" in parsed_dict:
-                config["agents"].update(parsed_dict["agents"])
-        except Exception as e:
-            logger.warning(f"Failed to parse agents.yaml: {e}. Using defaults.")
 
-    return config
+def load_agent_config(project_root: Path) -> dict:
+    """Load `.superpowers/agents.yaml`, deep-merged over DEFAULT_CONFIG.
+
+    Raises ConfigError if the file exists but cannot be parsed: a config we
+    cannot read is not a reason to silently run with different settings.
+    """
+    config_file = Path(project_root) / ".superpowers" / "agents.yaml"
+    if not config_file.exists():
+        return copy.deepcopy(DEFAULT_CONFIG)
+
+    try:
+        yaml = YAML(typ="rt")
+        parsed = yaml.load(config_file.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        raise ConfigError(f"Failed to parse {config_file}: {exc}") from exc
+
+    return deep_merge(DEFAULT_CONFIG, _to_plain_dict(parsed))
+
+
+def resolve_agent(config: dict, role: str) -> dict:
+    """Return a copy of an agent's config with global harness defaults applied."""
+    agents = config.get("agents") or {}
+    if role not in agents:
+        raise ConfigError(
+            f"Agent role '{role}' is not defined in the configuration. "
+            f"Defined roles: {sorted(agents)}"
+        )
+    agent = copy.deepcopy(agents[role])
+    harness = config.get("harness") or {}
+    if "harness" not in agent and harness.get("default"):
+        agent["harness"] = harness["default"]
+    if "provider" not in agent and harness.get("provider"):
+        agent["provider"] = harness["provider"]
+    return agent
