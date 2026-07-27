@@ -89,3 +89,41 @@ def test_lock_records_a_live_supervisor(tmp_project, demo_spec):
         assert data["state"] in {"starting", "running"}
         if data["state"] == "running":
             assert data["pid"]
+
+
+def test_bad_adapter_leaves_the_slice_untouched(tmp_project, demo_spec):
+    """Adapter resolution is fallible (unknown harness_adapter file) and must
+    be checked before the in_progress_status mutation — not after it, or a
+    reachable misconfiguration strands the slice with no legal way back."""
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        "agents:\n"
+        "  planner:\n"
+        "    model: \"print('stub ok')\"\n"
+        "    harness_adapter: 'does_not_exist.py'\n"
+        "    isolated_worktree: false\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit):
+        cmd_dispatch_agent(_args(demo_spec))
+
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
+    assert not lock_path(tmp_project, "slice-01-demo").exists()
+
+
+def test_isolated_worktree_dispatch_creates_a_worktree(tmp_project, demo_spec):
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        "agents:\n"
+        "  planner:\n"
+        "    model: \"print('stub ok')\"\n"
+        "    harness_adapter: 'stub_adapter.py'\n"
+        "    isolated_worktree: true\n",
+        encoding="utf-8",
+    )
+    cmd_dispatch_agent(_args(demo_spec))
+
+    worktree = tmp_project / ".worktrees" / "slice-01-demo"
+    assert _wait_for(lambda: worktree.exists())
+    assert _wait_for(
+        lambda: parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+        == "PLAN_GENERATED"
+    )

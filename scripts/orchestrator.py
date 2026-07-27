@@ -164,7 +164,15 @@ def cmd_dispatch_agent(args):
         print(f"Error: {exc}")
         sys.exit(1)
 
-    # 4-5. Fallible side effects, before any mutation we would have to undo
+    # 4-5. Fallible side effects, before any mutation we would have to undo.
+    # Adapter resolution belongs here too, not after step 6: an unknown
+    # harness or a missing custom-adapter file is exactly as fallible as a
+    # failing hook, and discovering it only after the status write would
+    # strand the slice at in_progress_status with no legal way back.
+    log_file = log_path(project_root, role, target_file.stem)
+    prompt_template = agent_config.get("prompt_template", "Process {file}")
+    task_prompt = prompt_template.format(file=target_file)
+
     try:
         env = run_infrastructure_hook(
             f"on_slice_{role}_start", project_root=project_root, known_events=known_events
@@ -173,6 +181,8 @@ def cmd_dispatch_agent(args):
             cwd = create_git_worktree(slice_id, project_root)
         else:
             cwd = project_root
+        adapter = get_harness_adapter(agent_config, project_root)
+        agent_argv = adapter.build_command(agent_config, task_prompt)
     except OrchestratorError as exc:
         release_slice_lock_file(lock_file)
         print(f"Error: {exc}")
@@ -182,25 +192,21 @@ def cmd_dispatch_agent(args):
     # 6. First irreversible mutation
     in_progress_status = agent_config.get("in_progress_status")
     if in_progress_status:
-        update_frontmatter_status(
+        applied = update_frontmatter_status(
             target_file, in_progress_status,
             state_machine["valid_statuses"], state_machine["transitions"],
         )
+        if not applied:
+            release_slice_lock_file(lock_file)
+            print(
+                f"Error: could not transition '{slice_id}' from "
+                f"'{current_status}' to '{in_progress_status}'."
+            )
+            print(f"Slice '{slice_id}' left untouched at status '{current_status}'.")
+            sys.exit(1)
 
     # 7. Spawn the supervisor
-    log_file = log_path(project_root, role, target_file.stem)
     logs_dir(project_root).mkdir(parents=True, exist_ok=True)
-
-    prompt_template = agent_config.get("prompt_template", "Process {file}")
-    task_prompt = prompt_template.format(file=target_file)
-
-    try:
-        adapter = get_harness_adapter(agent_config, project_root)
-        agent_argv = adapter.build_command(agent_config, task_prompt)
-    except OrchestratorError as exc:
-        release_slice_lock_file(lock_file)
-        print(f"Error: {exc}")
-        sys.exit(1)
 
     runner_argv = [
         sys.executable, "-m", "scripts.runner",
