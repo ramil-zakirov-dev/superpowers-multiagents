@@ -12,13 +12,17 @@ first of those is standing anywhere near the slice's own worktree -- a
 module that guessed would guess wrong in two of the three.
 """
 
+import dataclasses
 import errno
 import hashlib
+import json
 import re
 import socket
+from pathlib import Path
 from typing import Iterable
 
 from scripts.errors import SandboxError
+from scripts.paths import sandbox_dir, sandbox_state_path
 
 #: Errnos meaning "the platform has not configured this address", as opposed
 #: to "something else is already bound to it". Windows reports the WSA alias.
@@ -104,3 +108,56 @@ def ip_for(branch: str, *, busy: Iterable[str] = ()) -> str:
         f"{branch!r}; {len(busy_set)} are held by tracked stacks. Run "
         f"`sandbox status` and tear down what you no longer need."
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class SandboxState:
+    """One compose project's allocation record.
+
+    Lifetime rule, and the only one: this record exists exactly as long as
+    the stack's volumes do. A teardown that keeps volumes keeps the record,
+    so a re-`up` returns the same address and the same data.
+    """
+
+    branch: str
+    ip: str
+    project_name: str
+    started_at: str
+
+
+def write_state(project_root, state: SandboxState) -> Path:
+    path = sandbox_state_path(Path(project_root), state.project_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(dataclasses.asdict(state), indent=2) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def read_state(project_root, branch: str) -> "SandboxState | None":
+    path = sandbox_state_path(Path(project_root), project_name_for(branch))
+    if not path.is_file():
+        return None
+    try:
+        return SandboxState(**json.loads(path.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return None
+
+
+def clear_state(project_root, branch: str) -> None:
+    sandbox_state_path(Path(project_root), project_name_for(branch)).unlink(
+        missing_ok=True
+    )
+
+
+def list_states(project_root) -> list:
+    directory = sandbox_dir(Path(project_root))
+    if not directory.is_dir():
+        return []
+    found = []
+    for entry in sorted(directory.glob("*.json")):
+        try:
+            found.append(SandboxState(**json.loads(entry.read_text(encoding="utf-8"))))
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            continue
+    return found

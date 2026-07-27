@@ -81,3 +81,32 @@ def test_probe_maps_errnos_to_verdicts(monkeypatch):
 
     monkeypatch.setattr(socket, "socket", lambda *a, **k: FakeSocket(None))
     assert sandbox._probe("127.0.0.9") == "free"
+
+
+def test_state_round_trips(tmp_path):
+    record = sandbox.SandboxState(
+        branch="feat/alpha", ip="127.0.0.7",
+        project_name="feat-alpha", started_at="2026-07-27T00:00:00+00:00",
+    )
+    sandbox.write_state(tmp_path, record)
+    assert sandbox.read_state(tmp_path, "feat/alpha") == record
+
+
+def test_read_state_is_none_when_untracked(tmp_path):
+    assert sandbox.read_state(tmp_path, "feat/nothing") is None
+
+
+def test_clear_state_is_idempotent(tmp_path):
+    sandbox.clear_state(tmp_path, "feat/absent")  # must not raise
+    record = sandbox.SandboxState("feat/a", "127.0.0.7", "feat-a", "t")
+    sandbox.write_state(tmp_path, record)
+    sandbox.clear_state(tmp_path, "feat/a")
+    assert sandbox.read_state(tmp_path, "feat/a") is None
+
+
+def test_list_states_ignores_unparsable_files(tmp_path):
+    record = sandbox.SandboxState("feat/a", "127.0.0.7", "feat-a", "t")
+    sandbox.write_state(tmp_path, record)
+    (sandbox_state_dir := sandbox.sandbox_dir(tmp_path)).mkdir(exist_ok=True)
+    (sandbox_state_dir / "garbage.json").write_text("{not json", encoding="utf-8")
+    assert sandbox.list_states(tmp_path) == [record]
