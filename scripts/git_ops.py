@@ -97,3 +97,23 @@ def merge_and_cleanup_worktree(slice_id: str, project_root: Path) -> bool:
             cwd=project_root, capture_output=True,
         )
     return True
+
+
+def current_branch(project_root: Path) -> str:
+    """The checked-out branch of `project_root`, or `detached-<sha>`.
+
+    Only used for agents that run in the project root itself. A slice's own
+    branch is always derived from its slice_id, never from here.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(project_root), capture_output=True, text=True,
+    )
+    name = (result.stdout or "").strip()
+    if result.returncode == 0 and name and name != "HEAD":
+        return name
+    sha = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=str(project_root), capture_output=True, text=True,
+    ).stdout.strip()
+    return f"detached-{sha}" if sha else "unknown"

@@ -185,6 +185,9 @@ def main(argv=None) -> int:
     parser.add_argument("--lock", required=True)
     parser.add_argument("--log", required=True)
     parser.add_argument("--cwd", required=True)
+    # Accepted so the supervisor's argv parses; not yet consumed here -- a
+    # later task uses it to tear the sandbox down on the agent's own outcome.
+    parser.add_argument("--sandbox-branch", default=None)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 

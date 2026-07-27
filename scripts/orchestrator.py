@@ -20,10 +20,11 @@ from scripts.config import load_agent_config, resolve_agent, validate_config
 from scripts.dependencies import check_unmet_dependencies
 from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
-from scripts.git_ops import create_git_worktree, merge_and_cleanup_worktree
+from scripts.git_ops import create_git_worktree, current_branch, merge_and_cleanup_worktree
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
+from scripts import sandbox
 from scripts.utils import find_project_root
 
 #: Root of this plugin — the supervisor is spawned with this as its cwd so
@@ -232,13 +233,30 @@ def cmd_dispatch_agent(args):
     task_prompt = prompt_template.format(file=target_file)
 
     try:
-        env = run_infrastructure_hook(
-            f"on_slice_{role}_start", project_root=project_root, known_events=known_events
-        )
         if agent_config.get("isolated_worktree", False):
             cwd = create_git_worktree(slice_id, project_root)
+            sandbox_branch = f"feat/{slice_id}"
+            sandbox_env = sandbox.ensure_up(sandbox_branch, project_root, config)
         else:
             cwd = project_root
+            sandbox_branch = current_branch(project_root)
+            sandbox_env = sandbox.resolve_env(sandbox_branch, project_root, config)
+
+        env = dict(os.environ)
+        env.update(sandbox_env)
+        env.update({
+            "SUPERPOWERS_SLICE_ID": slice_id,
+            "SUPERPOWERS_SLICE_BRANCH": sandbox_branch,
+            "SUPERPOWERS_WORKTREE": str(cwd),
+        })
+
+        # The start hook runs after the worktree and the sandbox exist, so a
+        # project hook can act on both. This is a deliberate change from
+        # 2.0.0, where it ran first and could observe neither.
+        env = run_infrastructure_hook(
+            f"on_slice_{role}_start", project_root=project_root,
+            current_env=env, known_events=known_events,
+        )
         adapter = get_harness_adapter(agent_config, project_root)
         agent_argv = adapter.build_command(agent_config, task_prompt)
     except OrchestratorError as exc:
@@ -274,6 +292,7 @@ def cmd_dispatch_agent(args):
         "--lock", str(lock_file),
         "--log", str(log_file),
         "--cwd", str(cwd),
+        "--sandbox-branch", sandbox_branch,
         "--", *[str(part) for part in agent_argv],
     ]
 
