@@ -105,6 +105,17 @@ def cmd_set_status(args):
 
     frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
     slice_id = frontmatter.get("slice_id", filepath.stem)
+    current_status = frontmatter.get("status", "UNKNOWN")
+
+    # Check legality BEFORE the merge: merge_and_cleanup_worktree performs an
+    # irreversible git merge and force-deletes the worktree. Discovering only
+    # afterward that the transition was illegal would leave the branch merged,
+    # the worktree gone, and the command reporting failure while the on-disk
+    # status silently stayed put -- exactly the "mutation before the fallible
+    # check" ordering this slice exists to eliminate everywhere else.
+    if "VERIFIED_CLOSED" not in (transitions.get(current_status) or []):
+        print(f"Error: Invalid state transition from '{current_status}' to 'VERIFIED_CLOSED'.")
+        sys.exit(1)
 
     try:
         merged = merge_and_cleanup_worktree(slice_id, project_root)
@@ -113,7 +124,13 @@ def cmd_set_status(args):
         sys.exit(1)
 
     if not merged:
-        update_frontmatter_status(filepath, "MERGE_CONFLICT", valid_statuses, transitions)
+        if not update_frontmatter_status(filepath, "MERGE_CONFLICT", valid_statuses, transitions):
+            print(
+                f"Error: merge conflicted on 'feat/{slice_id}', but the slice could "
+                f"not be marked MERGE_CONFLICT from '{current_status}'. Resolve the "
+                f"git conflict by hand; the on-disk status was not changed."
+            )
+            sys.exit(1)
         print(f"Merge conflict on 'feat/{slice_id}'. Slice marked MERGE_CONFLICT.")
         print("Resolve the conflict, commit, then set VERIFIED_CLOSED again.")
         sys.exit(1)
@@ -136,7 +153,18 @@ def cmd_set_status(args):
 def cmd_trigger_hook(args):
     """Manually or programmatically triggers an infrastructure hook."""
     project_root = Path(args.dir) if args.dir else Path.cwd()
-    run_infrastructure_hook(args.event, project_root=project_root)
+
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+        run_infrastructure_hook(
+            args.event,
+            project_root=project_root,
+            known_events=canonical_events(config.get("agents", {})),
+        )
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
 
 
 def cmd_dispatch_agent(args):

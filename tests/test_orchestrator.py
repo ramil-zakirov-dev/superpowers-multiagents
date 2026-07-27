@@ -410,6 +410,43 @@ def test_cmd_trigger_hook():
         cmd_trigger_hook(args)
 
 
+def test_cmd_trigger_hook_warns_on_unknown_event_name(tmp_path, capsys):
+    """Final-review regression: cmd_trigger_hook called run_infrastructure_hook
+    with no known_events, so a misspelled event -- exactly the class of bug
+    that hid the sandbox-loopback hook for months -- produced no warning in
+    the one command an operator would use to debug it."""
+    sp_dir = tmp_path / ".superpowers"
+    sp_dir.mkdir()
+    (sp_dir / "hooks.yaml").write_text(
+        'hooks:\n  on_slice_execution_start:\n    command: "echo hi"\n', encoding="utf-8"
+    )
+
+    from scripts.orchestrator import cmd_trigger_hook
+    import argparse
+    cmd_trigger_hook(argparse.Namespace(event="on_slice_planner_start", dir=str(tmp_path)))
+
+    out = capsys.readouterr().out
+    assert "on_slice_execution_start" in out
+    assert "on_slice_executor_start" in out
+
+
+def test_cmd_trigger_hook_reports_a_failing_hook_cleanly(tmp_path, capsys):
+    """A failing hook command must exit non-zero with a message, not escape
+    as an uncaught HookError traceback -- main() has no handler of its own."""
+    sp_dir = tmp_path / ".superpowers"
+    sp_dir.mkdir()
+    (sp_dir / "hooks.yaml").write_text(
+        'hooks:\n  on_slice_planner_start:\n    command: "exit 5"\n', encoding="utf-8"
+    )
+
+    from scripts.orchestrator import cmd_trigger_hook
+    import argparse
+    with pytest.raises(SystemExit):
+        cmd_trigger_hook(argparse.Namespace(event="on_slice_planner_start", dir=str(tmp_path)))
+
+    assert "Error" in capsys.readouterr().out
+
+
 # ===== BOM tolerance =====
 
 def test_parse_frontmatter_with_bom():

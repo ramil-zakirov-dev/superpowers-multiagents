@@ -22,6 +22,25 @@ def test_plain_status_change_applies(tmp_project, demo_spec):
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLANNING"
 
 
+def test_illegal_verified_closed_source_status_refuses_before_merging(tmp_project, demo_spec):
+    """Final-review regression: cmd_set_status used to run the irreversible
+    merge + force worktree removal BEFORE checking the transition was legal,
+    so an illegal source status (e.g. the spec's default SPEC_APPROVED) got
+    silently merged and the worktree deleted while the command still
+    reported failure and left the on-disk status unchanged."""
+    worktree = create_git_worktree("slice-01-demo", tmp_project)
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-qm", "feat: work")
+
+    with pytest.raises(SystemExit):
+        cmd_set_status(argparse.Namespace(file=str(demo_spec), status="VERIFIED_CLOSED"))
+
+    assert not (tmp_project / "feature.py").exists(), "merge must not have happened"
+    assert worktree.exists(), "worktree must not have been deleted"
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
+
+
 def test_verified_closed_merges_then_marks(tmp_project, demo_spec):
     _set_raw_status(demo_spec, "EXECUTION_COMPLETE")
     _git(tmp_project, "add", "-A")
