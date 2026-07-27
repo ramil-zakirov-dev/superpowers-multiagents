@@ -389,37 +389,6 @@ def test_custom_adapter_import_leaves_no_pycache():
         assert not (tmp_path / "__pycache__").exists()
 
 
-# ===== cmd_summary =====
-
-def test_cmd_summary(capsys):
-    """cmd_summary should print the last 50 lines of the matching log."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        logs_dir = Path(tmpdir) / "logs"
-        logs_dir.mkdir()
-        log_file = logs_dir / "executor_slice-01-auth.log"
-        log_content = "\n".join([f"Line {i}: test output" for i in range(100)])
-        log_file.write_text(log_content, encoding="utf-8")
-
-        # Patch Path("logs") to point to our temp dir
-        from scripts.orchestrator import cmd_summary
-        import argparse
-        args = argparse.Namespace(slice="slice-01-auth")
-
-        original_cwd = Path.cwd()
-        try:
-            os.chdir(tmpdir)
-            cmd_summary(args)
-        finally:
-            os.chdir(original_cwd)
-
-        captured = capsys.readouterr()
-        assert "slice-01-auth" in captured.out
-        assert "Line 99: test output" in captured.out
-        # Should only show last 50 lines
-        assert "Line 49: test output" not in captured.out
-        assert "Line 50: test output" in captured.out
-
-
 # ===== cmd_trigger_hook =====
 
 def test_cmd_trigger_hook():

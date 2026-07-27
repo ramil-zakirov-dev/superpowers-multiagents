@@ -265,20 +265,20 @@ def cmd_dispatch_agent(args):
 
 
 def cmd_summary(args):
-    """Extracts the tail of an execution log for audit."""
-    slice_id = args.slice
-    logs_dir = Path("logs")
-    matching_logs = list(logs_dir.glob(f"*{slice_id}*.log"))
-    if not matching_logs:
-        print(f"No execution log found for slice '{slice_id}' in logs/")
+    """Print the tail of an execution log for audit."""
+    project_root = Path(args.dir).resolve() if args.dir else Path.cwd()
+    directory = logs_dir(project_root)
+
+    matching = sorted(directory.glob(f"*{args.slice}*.log")) if directory.exists() else []
+    if not matching:
+        print(f"No execution log for slice '{args.slice}' in {directory}")
         sys.exit(1)
 
-    log_file = matching_logs[-1]
-    content = log_file.read_text(encoding="utf-8", errors="ignore")
+    log_file = max(matching, key=lambda path: path.stat().st_mtime)
+    lines = log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
 
-    print(f"\n--- LAST DIALOGUE FOR {slice_id} ---")
-    lines = content.splitlines()
-    print("\n".join(lines[-50:] if len(lines) > 50 else lines))
+    print(f"\n--- LAST 50 LINES OF {log_file.name} ---")
+    print("\n".join(lines[-50:]))
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +324,7 @@ def main():
     # summary
     p_sum = subparsers.add_parser("summary", help="Show execution summary log for audit")
     p_sum.add_argument("--slice", required=True, help="Slice ID or keyword")
+    p_sum.add_argument("--dir", default="", help="Project root directory (default: cwd)")
 
     args = parser.parse_args()
 
