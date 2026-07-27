@@ -217,6 +217,39 @@ def test_exec_resolves_a_windows_cmd_shim_without_shell_true(
     assert excinfo.value.code == 0
 
 
+def test_up_on_disabled_sandbox_fails_closed_with_clear_error(
+    tmp_project, stub_docker, capsys
+):
+    """`sandbox up` against a project with no `sandbox` block (or an explicit
+    `enabled: false`) must fail closed with an actionable message instead of
+    crashing or silently claiming success -- this was the I2 fix in 4f53f72,
+    previously only manually verified.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_sandbox(_args("up", dir=str(tmp_project)))
+
+    assert excinfo.value.code != 0
+    out = capsys.readouterr().out
+    assert "sandbox is not enabled" in out
+    assert len(stub_docker.calls) == 0
+
+
+def test_teardown_on_disabled_sandbox_fails_closed_without_touching_docker(
+    tmp_project, stub_docker, capsys
+):
+    """`sandbox teardown` against a disabled/absent sandbox config must fail
+    closed and must not shell out to docker at all -- the disabled check has
+    to run before the `--yes` gate, not after.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_sandbox(_args("teardown", dir=str(tmp_project), yes=True))
+
+    assert excinfo.value.code != 0
+    out = capsys.readouterr().out
+    assert "sandbox is not enabled" in out
+    assert stub_docker.calls == []
+
+
 def test_teardown_refuses_volume_destruction_without_yes(tmp_project, stub_docker):
     from scripts import sandbox
 

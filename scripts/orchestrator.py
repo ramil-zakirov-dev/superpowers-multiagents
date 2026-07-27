@@ -385,7 +385,7 @@ def cmd_sandbox(args):
         if args.action in ("up", "restart"):
             if not sandbox_cfg.get("enabled"):
                 print(
-                    "Error: sandbox.enabled is false in .superpowers/agents.yaml; "
+                    "Error: sandbox is not enabled for this project; "
                     "nothing to bring up."
                 )
                 sys.exit(1)
@@ -398,7 +398,7 @@ def cmd_sandbox(args):
         if args.action == "teardown":
             if not sandbox_cfg.get("enabled"):
                 print(
-                    "Error: sandbox.enabled is false in .superpowers/agents.yaml; "
+                    "Error: sandbox is not enabled for this project; "
                     "nothing to tear down."
                 )
                 sys.exit(1)

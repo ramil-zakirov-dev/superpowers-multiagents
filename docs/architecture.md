@@ -126,8 +126,13 @@ never anywhere else:
 
 | Site | Fires after | Mode (config key) | Default `docker compose` action |
 | :--- | :--- | :--- | :--- |
-| `runner.py`, on agent exit | `on_{role}_failed` | `sandbox.teardown.on_failed` | `containers` → `down` |
+| `runner.py`, on agent exit (isolated agent only) | `on_{role}_failed` | `sandbox.teardown.on_failed` | `containers` → `down` |
 | `orchestrator.py cmd_set_status`, on `VERIFIED_CLOSED` | `on_slice_verified_closed` | `sandbox.teardown.on_verified_closed` | `volumes` → `down -v` |
+
+The failure-teardown site applies only to agents with `isolated_worktree:
+true`. A non-isolated agent never owns a stack's lifecycle — it only ever
+`resolve_env`s an existing stack, never `ensure_up`s one — so its crash never
+tears down the stack it merely attached to.
 
 **Teardown always follows the corresponding hook, never precedes or replaces
 it.** Both call sites run the hook first and only then call

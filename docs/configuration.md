@@ -238,7 +238,7 @@ sandbox:
 | `health_timeout` | int | Seconds to wait for `health_service` to report `healthy` before dispatch fails with `SandboxError`. |
 | `env` | mapping | Extra environment variables passed to the dispatched agent. Values may reference the two template tokens below and `${VAR}` from the parent process environment. |
 | `teardown.on_verified_closed` | string | Teardown mode run when a slice's status becomes `VERIFIED_CLOSED`. |
-| `teardown.on_failed` | string | Teardown mode run when the dispatched agent exits non-zero. |
+| `teardown.on_failed` | string | Teardown mode run when the dispatched agent exits non-zero (isolated agents only -- a non-isolated agent's failure never tears down the stack it merely attached to). |
 
 ### Template tokens
 
@@ -313,7 +313,7 @@ contract — the orchestrator's half is injecting `LOOPBACK_IP` before every
 Human-facing lifecycle control, exposed as a subcommand of the same entry
 point used for dispatch — `orchestrator.py sandbox <action>`.
 
-**Flags must precede the action.** `action` is parsed as `nargs=REMAINDER`
+**Flags must precede the action.** `cmd` is parsed as `nargs=REMAINDER`
 (needed so `exec -- <command>` can pass arbitrary flags through untouched),
 which means anything after the action is swallowed as part of `exec`'s
 command instead of being parsed as a flag:
@@ -322,7 +322,7 @@ command instead of being parsed as a flag:
 # Correct: flags before the action
 python -m scripts.orchestrator sandbox --dir . status
 
-# Wrong: silently ignores --dir and runs against the default project root
+# Wrong: rejected -- `--dir` is swallowed by `exec`'s REMAINDER bucket and the action fails closed
 python -m scripts.orchestrator sandbox status --dir .
 ```
 
@@ -334,9 +334,9 @@ lands after it, rather than quietly running with the wrong config.
 | `up` | `sandbox.ensure_up(...)` — allocates an address if needed, brings the stack up, waits on `health_service` if configured. |
 | `restart` | Tears down containers (keeping volumes), then brings the stack back up on the same address. |
 | `status` | Lists every tracked stack: branch, loopback address, and `running`/`stopped` (from `docker compose ps`, not address availability). |
-| `env --shell posix\|powershell\|json` | Prints the stack's environment in the requested format — `export KEY=VALUE`, `$env:KEY = "..."`, or a JSON object. |
+| `--shell posix\|powershell\|json env` | Prints the stack's environment in the requested format — `export KEY=VALUE`, `$env:KEY = "..."`, or a JSON object. |
 | `exec -- <command...>` | Runs `<command...>` with the stack's environment merged in, in the project root. Everything after `--` is passed through untouched. |
-| `teardown --yes` | Destroys containers and volumes and deletes the state record. Refuses (exit code 2) without `--yes`. |
+| `--yes teardown` | Destroys containers and volumes and deletes the state record. Refuses (exit code 2) without `--yes`. |
 
 All actions accept `--dir <project root>` (default: cwd) and `--branch
 <branch>` (default: current branch). `up`, `restart`, `env`, `exec`, and

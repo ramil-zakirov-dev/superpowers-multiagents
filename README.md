@@ -81,7 +81,7 @@ flowchart TD
     R -->|"exit 0 ➔ PLAN_GENERATED / EXECUTION_COMPLETE"| A2
     R -->|"exit ≠0"| F["🚫 FAILED"]
     F --> A2
-    F -->|"teardown"| TD1["🧹 down (containers)"]
+    F -->|"teardown (isolated agents only,<br/>e.g. executor by default)"| TD1["🧹 down (containers)"]
     A2 -->|"Diff Audit"| Human
     Human -->|"VERIFIED_CLOSED"| Done["✅ Closed Slice"]
     Done -->|"teardown"| TD2["🧹 down -v (volumes)"]

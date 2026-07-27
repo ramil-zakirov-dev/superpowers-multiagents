@@ -143,7 +143,7 @@ Only relevant when `.superpowers/agents.yaml` declares a `sandbox` block
 python "<orchestrator>" sandbox --dir . status
 python "<orchestrator>" sandbox --dir . up
 python "<orchestrator>" sandbox --dir . restart
-python "<orchestrator>" sandbox --dir . env --shell posix
+python "<orchestrator>" sandbox --dir . --shell posix env
 python "<orchestrator>" sandbox --dir . exec -- npm test
-python "<orchestrator>" sandbox --dir . teardown --yes
+python "<orchestrator>" sandbox --dir . --yes teardown
 ```
