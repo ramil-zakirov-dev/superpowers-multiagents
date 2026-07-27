@@ -43,6 +43,17 @@ def test_user_changes_still_make_the_tree_dirty(repo):
     assert check_working_tree_clean(repo) is False
 
 
+def test_stray_file_beside_uncommitted_artifacts_still_makes_the_tree_dirty(repo):
+    """A bare `?? .superpowers/` porcelain line (git collapses a wholly-new,
+    never-committed directory to one entry) must not swallow real dirt that
+    happens to share that parent — only --untracked-files=all, which lists
+    every file individually, keeps this distinguishable."""
+    (repo / ".superpowers" / "logs").mkdir(parents=True)
+    (repo / ".superpowers" / "logs" / "executor_x.log").write_text("out", encoding="utf-8")
+    (repo / ".superpowers" / "debug.json").write_text("{}", encoding="utf-8")
+    assert check_working_tree_clean(repo) is False
+
+
 def test_modified_tracked_file_makes_the_tree_dirty(repo):
     (repo / "README.md").write_text("changed\n", encoding="utf-8")
     assert check_working_tree_clean(repo) is False

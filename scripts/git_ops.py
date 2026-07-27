@@ -23,7 +23,11 @@ def check_working_tree_clean(project_root: Path) -> bool:
     Counting those as dirt made the merge gate refuse unconditionally.
     """
     result = subprocess.run(
-        ["git", "status", "--porcelain"],
+        # --untracked-files=all: without it, git collapses a wholly-new
+        # directory (e.g. the first-ever .superpowers/logs/) into one
+        # `?? .superpowers/` line instead of listing the files inside it,
+        # which is unmatchable against is_artifact_path's per-file prefixes.
+        ["git", "status", "--porcelain", "--untracked-files=all"],
         cwd=project_root, capture_output=True, text=True,
     )
     if result.returncode != 0:
