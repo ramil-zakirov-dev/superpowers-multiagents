@@ -7,7 +7,9 @@ config, frontmatter, adapters, git_ops, hooks, locks, dependencies.
 """
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -320,6 +322,83 @@ def cmd_dispatch_agent(args):
     _warn_if_artifacts_not_ignored(project_root)
 
 
+def _quote_posix(value: str) -> str:
+    if re.match(r"^[A-Za-z0-9_\-./:=]+$", value):
+        return value
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def cmd_sandbox(args):
+    """Human-facing sandbox lifecycle. The orchestrator uses the module directly."""
+    project_root = Path(args.dir).resolve() if args.dir else Path.cwd()
+
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    branch = args.branch or current_branch(project_root)
+
+    try:
+        if args.action == "status":
+            rows = sandbox.status_rows(project_root)
+            if not rows:
+                print("No sandbox stacks are tracked.")
+            for name, ip, state in rows:
+                print(f"{name:<48} {ip:<12} {state}")
+            return
+
+        if args.action in ("up", "restart"):
+            if args.action == "restart":
+                sandbox.tear_down(branch, project_root, config, "containers")
+            env = sandbox.ensure_up(branch, project_root, config)
+            print(f"Stack for {branch} is up on {env['LOOPBACK_IP']}.")
+            return
+
+        if args.action == "teardown":
+            mode = "volumes" if args.yes else "containers"
+            if not args.yes:
+                print(
+                    f"Refusing to destroy volumes for {branch} without --yes. "
+                    f"Stopping containers only would be `restart`; re-run with "
+                    f"--yes to destroy data."
+                )
+                sys.exit(2)
+            sandbox.tear_down(branch, project_root, config, mode)
+            print(f"Stack for {branch} torn down ({mode}).")
+            return
+
+        env = sandbox.resolve_env(branch, project_root, config)
+        if not env:
+            print(f"No sandbox state for branch {branch}; run `sandbox up` first.")
+            sys.exit(1)
+
+        if args.action == "env":
+            if args.shell == "json":
+                print(json.dumps(env, indent=2))
+            elif args.shell == "powershell":
+                for key, value in env.items():
+                    print(f'$env:{key} = "{value}"')
+            else:
+                for key, value in env.items():
+                    print(f"export {key}={_quote_posix(value)}")
+            return
+
+        if args.action == "exec":
+            command = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+            if not command:
+                print("Error: `sandbox exec` needs a command after `--`.")
+                sys.exit(1)
+            sys.exit(subprocess.run(
+                command, cwd=str(project_root), env={**os.environ, **env}
+            ).returncode)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+
 def cmd_summary(args):
     """Print the tail of an execution log for audit."""
     project_root = Path(args.dir).resolve() if args.dir else Path.cwd()
@@ -382,6 +461,20 @@ def main():
     p_sum.add_argument("--slice", required=True, help="Slice ID or keyword")
     p_sum.add_argument("--dir", default="", help="Project root directory (default: cwd)")
 
+    # sandbox
+    p_sandbox = subparsers.add_parser("sandbox", help="Per-slice infrastructure sandbox")
+    p_sandbox.add_argument(
+        "action", choices=["up", "restart", "status", "env", "exec", "teardown"]
+    )
+    p_sandbox.add_argument("--dir", default="", help="Project root (default: cwd)")
+    p_sandbox.add_argument("--branch", default="", help="Branch (default: current)")
+    p_sandbox.add_argument(
+        "--shell", default="posix", choices=["posix", "powershell", "json"],
+        help="Output format for `env`",
+    )
+    p_sandbox.add_argument("--yes", action="store_true", help="Confirm volume destruction")
+    p_sandbox.add_argument("cmd", nargs=argparse.REMAINDER, help="Command for `exec`")
+
     args = parser.parse_args()
 
     if args.command == "status":
@@ -402,6 +495,8 @@ def main():
         cmd_dispatch_agent(args)
     elif args.command == "summary":
         cmd_summary(args)
+    elif args.command == "sandbox":
+        cmd_sandbox(args)
     else:
         parser.print_help()
 

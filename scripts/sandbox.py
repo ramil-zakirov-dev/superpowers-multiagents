@@ -350,3 +350,13 @@ def tear_down(branch: str, project_root, config: dict, mode: str) -> None:
     # The one state rule: the record dies with the volumes, and only with them.
     if mode == "volumes":
         clear_state(project_root, branch)
+
+
+def status_rows(project_root) -> list:
+    """(branch, ip, state) for every tracked stack. `state` is running|stopped."""
+    rows = []
+    for record in list_states(project_root):
+        probe = _probe(record.ip, port=0)
+        rows.append((record.branch, record.ip,
+                     "stopped" if probe == "free" else "running"))
+    return rows
