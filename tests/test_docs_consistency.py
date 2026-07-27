@@ -55,7 +55,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.0.0"
+    assert manifest["version"] == "2.1.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -87,7 +87,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.0.0"
+    assert plugin["version"] == package["version"] == "2.1.0"
 
 
 def test_requirements_declare_the_test_dependency():
@@ -198,3 +198,10 @@ def test_documented_sandbox_example_survives_the_real_validator():
     for block in sandbox_blocks:
         parsed = _to_plain_dict(YAML(typ="rt").load(block))
         validate_config(deep_merge(DEFAULT_CONFIG, parsed))
+
+
+def test_hook_ordering_change_is_recorded():
+    """A published contract that changed must say so somewhere a reader looks."""
+    documented = ARCHITECTURE + CONFIGURATION + README
+    assert "2.1.0" in documented
+    assert "after" in ARCHITECTURE and "worktree" in ARCHITECTURE

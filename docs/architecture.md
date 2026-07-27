@@ -84,18 +84,66 @@ any point.
 
 The order of steps in `cmd_dispatch_agent` is load-bearing, not incidental.
 Every step that can fail runs **before** the first irreversible mutation, so a
-failed precondition never leaves a slice that has to be repaired by hand:
+failed precondition never leaves a slice that has to be repaired by hand.
+
+As of 2.1.0 the sequence is worktree → sandbox → hook → adapter → status →
+spawn:
 
 ```
-1. resolve + validate config          5. create worktree            (may fail)
-2. dependency gate, state gate        6. resolve adapter + argv     (may fail)
-3. acquire lock                       7. set in_progress_status  <- first mutation
-4. fire on_slice_{role}_start (may fail)   8. spawn supervisor
+1. resolve + validate config          6. fire on_slice_{role}_start (may fail)
+2. dependency gate, state gate        7. resolve adapter + argv     (may fail)
+3. acquire lock                       8. set in_progress_status  <- first mutation
+4. create worktree             (may fail)   9. spawn supervisor
+5. bring up / resolve sandbox   (may fail)
 ```
 
-Anything failing in steps 4–6 releases the lock and exits non-zero with the
-slice still at its entry status. Step 7 is also checked: if the transition is
+**`on_slice_{role}_start` moved after worktree creation in 2.1.0.** In 2.0.0 it
+was step 4, firing before the worktree existed; a hook could act on neither
+the checked-out files nor any per-slice infrastructure. It now runs after both
+step 4 (worktree) and step 5 (sandbox), so a project hook can inspect the
+worktree's contents and read `LOOPBACK_IP` — and any other sandbox-rendered
+variable — from its environment. This is a behavioural change to a published
+contract: a `hooks.yaml` written against 2.0.0's ordering still runs, but a
+hook that assumed "no worktree yet" no longer holds.
+
+Anything failing in steps 6–8 releases the lock and exits non-zero with the
+slice still at its entry status. Step 8 is also checked: if the transition is
 rejected, the lock is released and nothing is spawned.
+
+The worktree created in step 4 is **intentionally left in place** if a later
+step in the block (sandbox, hook, adapter resolution, or the status
+transition) fails. `create_git_worktree` is idempotent — it returns the
+existing path, or reattaches to the existing branch, if `.worktrees/<slice_id>`
+is already there — so a retried dispatch reuses it rather than needing it
+rebuilt. Tearing it down automatically on every failure would risk discarding
+work a hook or human already put there, for no benefit a later retry
+couldn't get for free.
+
+### Sandbox lifecycle
+
+A per-slice sandbox, once brought up, is torn down at exactly two sites, and
+never anywhere else:
+
+| Site | Fires after | Mode (config key) | Default `docker compose` action |
+| :--- | :--- | :--- | :--- |
+| `runner.py`, on agent exit | `on_{role}_failed` | `sandbox.teardown.on_failed` | `containers` → `down` |
+| `orchestrator.py cmd_set_status`, on `VERIFIED_CLOSED` | `on_slice_verified_closed` | `sandbox.teardown.on_verified_closed` | `volumes` → `down -v` |
+
+**Teardown always follows the corresponding hook, never precedes or replaces
+it.** Both call sites run the hook first and only then call
+`sandbox.tear_down`; both wrap the teardown call in its own `try/except` that
+downgrades a failure to a warning, because the slice's outcome — `FAILED` or
+`VERIFIED_CLOSED` — was already recorded by the time teardown runs, and a
+container that won't stop must not overturn it.
+
+**State invariant: the allocation record under `.superpowers/sandbox/` is
+deleted if and only if the volumes are destroyed.** `tear_down` calls
+`clear_state` only when `mode == "volumes"`; a `containers`-mode teardown
+(the failure path's default) stops the stack but keeps its recorded IP and
+project name, so a subsequent dispatch for the same branch reconnects to the
+same address instead of allocating a new one. Only a `volumes` teardown — the
+verified-closed path's default — clears the record, because at that point
+there is no more data to reconnect to.
 
 ### Runtime artifacts
 

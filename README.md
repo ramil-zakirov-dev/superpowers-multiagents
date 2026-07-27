@@ -55,6 +55,8 @@ flowchart TD
     end
 
     subgraph SUP ["Orchestrator (Supervision Layer)"]
+        W["📁 create worktree<br/>.worktrees/&lt;slice_id&gt;"]
+        SB["🐳 sandbox up<br/>per-slice docker stack, LOOPBACK_IP"]
         R["🛡 runner.py — captures the log, holds the lock,<br/>derives status from the exit code"]
     end
 
@@ -68,16 +70,21 @@ flowchart TD
     A2 -->|"Slice Spec"| Human
     Human -->|"SPEC_APPROVED"| A2
 
-    A2 -->|"dispatch-agent --role planner"| R
-    A2 -->|"dispatch-agent --role executor"| R
+    A2 -->|"dispatch-agent --role planner"| W
+    A2 -->|"dispatch-agent --role executor"| W
+    W --> SB
+    SB --> R
     R --> A3
     R --> A4
     A3 -->|"exit code"| R
     A4 -->|"exit code"| R
     R -->|"exit 0 ➔ PLAN_GENERATED / EXECUTION_COMPLETE"| A2
-    R -->|"exit ≠0 ➔ FAILED"| A2
+    R -->|"exit ≠0"| F["🚫 FAILED"]
+    F --> A2
+    F -->|"teardown"| TD1["🧹 down (containers)"]
     A2 -->|"Diff Audit"| Human
     Human -->|"VERIFIED_CLOSED"| Done["✅ Closed Slice"]
+    Done -->|"teardown"| TD2["🧹 down -v (volumes)"]
 ```
 
 > **The agent never sets its own terminal status.** `dispatch-agent` returns as
