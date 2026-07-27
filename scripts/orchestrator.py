@@ -79,28 +79,53 @@ def cmd_status(args):
 
 
 def cmd_set_status(args):
-    """Manually sets frontmatter status and triggers hooks & merge cleanups."""
-    filepath = Path(args.file)
+    """Set a slice's status. VERIFIED_CLOSED merges first, then marks.
+
+    The order matters: marking VERIFIED_CLOSED first makes the state terminal,
+    after which a merge conflict cannot be recorded at all.
+    """
+    filepath = Path(args.file).resolve()
     project_root = find_project_root(filepath)
-    config = load_agent_config(project_root)
 
-    sm = config["state_machine"]
-    success = update_frontmatter_status(
-        filepath, args.status, sm["valid_statuses"], sm["transitions"]
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    state_machine = config["state_machine"]
+    valid_statuses = state_machine["valid_statuses"]
+    transitions = state_machine["transitions"]
+
+    if args.status != "VERIFIED_CLOSED":
+        if not update_frontmatter_status(filepath, args.status, valid_statuses, transitions):
+            sys.exit(1)
+        return
+
+    frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
+    slice_id = frontmatter.get("slice_id", filepath.stem)
+
+    try:
+        merged = merge_and_cleanup_worktree(slice_id, project_root)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    if not merged:
+        update_frontmatter_status(filepath, "MERGE_CONFLICT", valid_statuses, transitions)
+        print(f"Merge conflict on 'feat/{slice_id}'. Slice marked MERGE_CONFLICT.")
+        print("Resolve the conflict, commit, then set VERIFIED_CLOSED again.")
+        sys.exit(1)
+
+    if not update_frontmatter_status(filepath, "VERIFIED_CLOSED", valid_statuses, transitions):
+        sys.exit(1)
+
+    run_infrastructure_hook(
+        "on_slice_verified_closed",
+        project_root=project_root,
+        known_events=canonical_events(config.get("agents", {})),
     )
-
-    if success and args.status == "VERIFIED_CLOSED":
-        fm = parse_frontmatter(filepath.read_text(encoding="utf-8"))
-        slice_id = fm.get("slice_id", filepath.stem)
-
-        def _update_status(fp, st):
-            update_frontmatter_status(fp, st, sm["valid_statuses"], sm["transitions"])
-
-        merge_and_cleanup_worktree(
-            slice_id, project_root,
-            spec_file=filepath, update_status_fn=_update_status,
-        )
-        run_infrastructure_hook("on_slice_verified_closed", project_root=project_root)
 
 
 def cmd_trigger_hook(args):
