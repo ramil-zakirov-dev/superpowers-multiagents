@@ -28,3 +28,7 @@ class HookError(OrchestratorError):
 
 class ValidationError(OrchestratorError):
     """A user-supplied identifier failed validation."""
+
+
+class SandboxError(OrchestratorError):
+    """The infrastructure sandbox could not be brought to the requested state."""
