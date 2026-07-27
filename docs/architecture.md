@@ -106,8 +106,11 @@ would split a directory from the file written into it.
 ```
 <project root>/.superpowers/logs/<role>_<stem>.log
 <project root>/.superpowers/locks/<slice_id>.lock
+<project root>/.superpowers/sandbox/<project_name>.json
 <project root>/.worktrees/<slice_id>/
 ```
+
+The `.superpowers/sandbox/` directory holds orchestrator state (allocation records for docker-compose projects) rather than slice payload, which is why it does not live under `.worktrees/`.
 
 `git_ops.check_working_tree_clean` ignores exactly these prefixes, so the
 orchestrator's own output cannot block its own merge. The user's `.gitignore`

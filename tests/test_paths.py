@@ -53,3 +53,19 @@ def test_artifact_prefixes_are_declared():
     assert ".superpowers/logs/" in ARTIFACT_PREFIXES
     assert ".superpowers/locks/" in ARTIFACT_PREFIXES
     assert ".worktrees/" in ARTIFACT_PREFIXES
+
+
+def test_sandbox_state_lives_under_the_superpowers_root(tmp_path):
+    from scripts.paths import sandbox_dir, sandbox_state_path
+
+    assert sandbox_dir(tmp_path) == tmp_path / ".superpowers" / "sandbox"
+    assert sandbox_state_path(tmp_path, "feat-alpha") == (
+        tmp_path / ".superpowers" / "sandbox" / "feat-alpha.json"
+    )
+
+
+def test_sandbox_state_is_a_runtime_artifact():
+    from scripts.paths import ARTIFACT_PREFIXES, is_artifact_path
+
+    assert ".superpowers/sandbox/" in ARTIFACT_PREFIXES
+    assert is_artifact_path(".superpowers/sandbox/feat-alpha.json")

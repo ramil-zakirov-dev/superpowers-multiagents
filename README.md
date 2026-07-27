@@ -162,6 +162,7 @@ lives under two directories, so one ignore rule covers it:
 | :--- | :--- |
 | `.superpowers/logs/` | One transcript per dispatch: `<role>_<file stem>.log` |
 | `.superpowers/locks/` | One lock per in-flight slice, naming the live supervisor PID |
+| `.superpowers/sandbox/` | One JSON record per docker-compose project, keyed by project name; contains the branch it belongs to, its loopback address, and when it was started; removed only when the stack's volumes are destroyed |
 | `.worktrees/` | Isolated worktrees for agents with `isolated_worktree: true` |
 
 Add them to your `.gitignore` — `dispatch-agent` prints a reminder when they are

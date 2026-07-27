@@ -17,6 +17,7 @@ SUPERPOWERS_DIRNAME = ".superpowers"
 ARTIFACT_PREFIXES: tuple[str, ...] = (
     ".superpowers/logs/",
     ".superpowers/locks/",
+    ".superpowers/sandbox/",
     ".worktrees/",
 )
 
@@ -39,6 +40,20 @@ def locks_dir(project_root: Path) -> Path:
 
 def lock_path(project_root: Path, slice_id: str) -> Path:
     return locks_dir(project_root) / f"{slice_id}.lock"
+
+
+def sandbox_dir(project_root: Path) -> Path:
+    return superpowers_dir(project_root) / "sandbox"
+
+
+def sandbox_state_path(project_root: Path, project_name: str) -> Path:
+    """Where one compose project's allocation record lives.
+
+    Keyed by the compose project name rather than the raw branch, because a
+    branch name may contain path separators and a compose project name is
+    already constrained to `[a-z0-9_-]`.
+    """
+    return sandbox_dir(project_root) / f"{project_name}.json"
 
 
 def is_artifact_path(rel_path: str) -> bool:
