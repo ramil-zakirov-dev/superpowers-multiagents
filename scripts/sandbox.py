@@ -374,6 +374,6 @@ def status_rows(project_root, config: dict) -> list:
             Path(project_root), sandbox_cfg, record,
             ["ps", "--format", "json"], env, capture=True,
         )
-        state = "running" if (result.stdout or "").strip() else "stopped"
+        state = "running" if (result.stdout or "").strip() not in ("", "[]") else "stopped"
         rows.append((record.branch, record.ip, state))
     return rows

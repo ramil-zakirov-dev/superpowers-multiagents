@@ -338,6 +338,10 @@ def test_status_rows_reflects_real_container_state_not_address_availability(
     rows = sandbox.status_rows(tmp_path, config)
     assert rows == [("feat/alpha", env["LOOPBACK_IP"], "stopped")]
 
+    monkeypatch.setenv("SUPERPOWERS_DOCKER_PS_OUTPUT", "[]")
+    rows = sandbox.status_rows(tmp_path, config)
+    assert rows == [("feat/alpha", env["LOOPBACK_IP"], "stopped")]
+
 
 def test_allocation_is_serialised(tmp_path, monkeypatch):
     """A second allocator must not run while the first holds the lock."""
