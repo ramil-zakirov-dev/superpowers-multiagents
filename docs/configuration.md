@@ -2,6 +2,12 @@
 
 The orchestrator reads `.superpowers/agents.yaml` from the target project root. If this file is absent, built-in defaults are used.
 
+## Override Behavior
+
+A partial override in `.superpowers/agents.yaml` **deep-merges** over the defaults. You do not need to repeat the entire config — only specify the fields you want to change. Unknown keys and unknown statuses are rejected at load time with an error.
+
+Global `harness.default` and `harness.provider` are inherited by agents that do not set their own `harness` or `provider` fields.
+
 ## Full Schema
 
 ```yaml
@@ -22,6 +28,7 @@ state_machine:
     - PLAN_APPROVED
     - EXECUTING
     - EXECUTION_COMPLETE
+    - FAILED
     - MERGE_CONFLICT
     - VERIFIED_CLOSED
   transitions:
@@ -30,8 +37,9 @@ state_machine:
     PLANNING: ["PLAN_GENERATED"]
     PLAN_GENERATED: ["PLAN_APPROVED", "PLANNING"]
     PLAN_APPROVED: ["EXECUTING", "PLAN_GENERATED"]
-    EXECUTING: ["EXECUTION_COMPLETE", "MERGE_CONFLICT"]
+    EXECUTING: ["EXECUTION_COMPLETE", "FAILED", "MERGE_CONFLICT"]
     EXECUTION_COMPLETE: ["VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"]
+    FAILED: ["EXECUTING", "PLANNING", "PLAN_APPROVED"]
     VERIFIED_CLOSED: []
     MERGE_CONFLICT: ["VERIFIED_CLOSED", "EXECUTING", "PLAN_APPROVED"]
 
@@ -69,6 +77,7 @@ agents:
 | `provider` | string | LLM provider (e.g. `opencode-go`, `anthropic`) |
 | `allowed_statuses` | list | Statuses from which this agent can be dispatched |
 | `in_progress_status` | string | Status to set before launching the agent |
+| `success_status` | string | Status set by the orchestrator when the agent exits 0 |
 | `isolated_worktree` | bool | Whether to run in an isolated git worktree |
 | `prompt_template` | string | Task prompt with `{file}` placeholder |
 | `extra_args` | list | Additional CLI flags (supports `{provider}` interpolation) |

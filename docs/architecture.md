@@ -8,6 +8,9 @@ The superpowers-multiagents orchestrator follows a modular, plugin-driven archit
 scripts/
 ├── orchestrator.py          # CLI entry point & command handlers
 ├── config.py                # DEFAULT_CONFIG & agents.yaml loader
+├── errors.py                # Exception hierarchy; library modules raise, process boundaries exit
+├── paths.py                 # Runtime artifact layout under `.superpowers/`
+├── runner.py                # Supervisor owning one dispatched agent from spawn to terminal status
 ├── frontmatter.py           # YAML frontmatter parsing & atomic status updates
 ├── git_ops.py               # Git worktree creation, merge & cleanup
 ├── hooks.py                 # Infrastructure hook loading & execution
@@ -35,7 +38,9 @@ The orchestrator dispatches agents to background CLI processes. The **adapter** 
 
 | Adapter | Harness Key | CLI Command Pattern |
 |---------|-------------|---------------------|
-| `OpenCodeAdapter` | `opencode` | `opencode run --model <model> "<prompt>"` |
+| `OpenCodeAdapter` | `opencode` | `opencode run --model <provider>/<model> <prompt>` |
+
+The `build_command()` method returns `list[str]`, which is passed to the supervisor with `shell=False` for safe argument handling.
 
 ### Custom Adapters
 
@@ -50,6 +55,30 @@ agents:
   my_agent:
     harness_adapter: './scripts/my_adapter.py'
 ```
+
+## Supervision
+
+`dispatch-agent` does not run the agent. It spawns `scripts/runner.py`, a
+supervisor that owns the agent for its whole lifetime, and returns
+immediately.
+
+    dispatch-agent  ->  runner (background)  ->  agent CLI
+                            |
+                            +-- captures stdout+stderr to .superpowers/logs/
+                            +-- claims the slice lock with its own PID
+                            +-- on exit 0   -> the role's success_status
+                            +-- on exit !=0 -> FAILED
+                            +-- fires on_<role>_complete / on_<role>_failed
+                            +-- releases the lock, on every path
+
+The terminal status is derived from the child's exit code rather than asked
+of the agent in its prompt. An agent that crashes, or simply never reports,
+therefore cannot strand a slice: it lands in `FAILED`, which transitions back
+to the gate it came from.
+
+The agent command is passed as an argument vector and spawned with
+`shell=False`. No shell parses a prompt, a path, or a configured argument at
+any point.
 
 ## Configuration
 

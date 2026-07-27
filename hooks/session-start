@@ -17,7 +17,8 @@ escape_for_json() {
 }
 
 escaped_content=$(escape_for_json "$orchestrator_skill")
-session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers multi-agent orchestration enabled.\n\n**Below is the full content of your 'superpowers-multiagents:multiagent-orchestrator' skill:**\n\n${escaped_content}\n</EXTREMELY_IMPORTANT>"
+orchestrator_path="${PLUGIN_ROOT}/scripts/orchestrator.py"
+session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers multi-agent orchestration enabled.\n\nOrchestrator absolute path: ${orchestrator_path}\nUse it wherever the skill below writes <orchestrator>.\n\n**Below is the full content of your 'superpowers-multiagents:multiagent-orchestrator' skill:**\n\n${escaped_content}\n</EXTREMELY_IMPORTANT>"
 
 if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
   printf '{\n  "additional_context": "%s"\n}\n' "$session_context" | cat

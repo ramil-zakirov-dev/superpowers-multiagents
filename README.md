@@ -7,7 +7,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)
 ![Architecture: N--Level](https://img.shields.io/badge/Architecture-N--Level-purple.svg)
-![Status: Production--Ready](https://img.shields.io/badge/Status-Production--Ready-brightgreen.svg)
+![Status: Beta](https://img.shields.io/badge/Status-Beta-yellow.svg)
 
 `superpowers-multiagents` separates strategic product design from heavy task planning and TDD code execution. By leveraging specialized LLM cost tiers, configurable CLI harnesses, and non-blocking background execution, it cuts token costs by 5x-10x while maintaining strict architectural quality.
 
@@ -39,7 +39,7 @@ While Superpowers provides the core engineering discipline, executing large TDD 
 | **🧠 Strategic Layer** | **API Code Loop**<br/>Expensive models used for repetitive text outputs. | **Claude Desktop GUI**<br/>Top models focus purely on architecture and diff audit. | **High Reasoning, Low Cost** |
 | **⚡ Execution Layer** | **Per-Token Metered API**<br/>3,000-line plans bill heavily per token. | **Background CLI Tasks**<br/>Unlimited TDD planning and testing at $0 extra cost. | **Uncapped Code Output** |
 | **🛡 System Stability** | **60-Second Timeout Limits**<br/>Prone to crashes on long tasks. | **Non-Blocking OS Processes**<br/>Tasks run background for 1–2+ hours smoothly. | **Zero Timeout Crashes** |
-| **📄 State Audit** | **Black-Box Database / Memory**<br/>State hidden inside framework memory. | **Single Source of Truth**<br/>Human-readable YAML Frontmatter in Markdown files. | **100% Transparency** |
+| **📄 State Audit** | **Black-Box Database / Memory**<br/>State hidden inside framework memory. | **Single Source of Truth**<br/>Status derived from supervisor exit code; full agent transcript captured to `.superpowers/logs/`. | **100% Transparency** |
 
 ---
 
@@ -83,10 +83,11 @@ The lifecycle of every feature slice is tracked transparently inside Markdown **
 | `DRAFT_SPEC` | **Opus 5** | Drafting design spec and interface contracts. |
 | `SPEC_APPROVED` | **Human Gate** | Human approves the design spec. |
 | `PLANNING` | **Planner (configurable)** | Background worker generating detailed TDD plan. |
-| `PLAN_GENERATED` | **Planner** | `slice-N-plan.md` written to disk. |
+| `PLAN_GENERATED` | **Orchestrator (from exit code)** | `slice-N-plan.md` written to disk. |
 | `PLAN_APPROVED` | **Opus 5 Gate** | Opus 5 audits plan against spec contracts. |
 | `EXECUTING` | **Executor (configurable)**| Background TDD execution (Red ➔ Green ➔ Commit). |
-| `EXECUTION_COMPLETE` | **Executor** | All tasks finished & test suite 100% PASS. |
+| `EXECUTION_COMPLETE` | **Orchestrator (from exit code)** | All tasks finished & test suite 100% PASS. |
+| `FAILED` | **Orchestrator** | Set by the orchestrator when the agent exits non-zero. |
 | `VERIFIED_CLOSED` | **Opus 5 Gate** | Opus 5 audits `git diff` and marks slice closed. |
 
 ---
@@ -98,13 +99,15 @@ Projects can optionally define `.superpowers/hooks.yaml` in their repository roo
 ```yaml
 # Example: .superpowers/hooks.yaml
 hooks:
-  on_slice_planner_start:
-    command: "echo Setting up environment..."
   on_slice_executor_start:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py up"
     capture_env: true
-  on_slice_verified_closed:
+  on_executor_complete:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
+  on_executor_failed:
+    command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
+  on_slice_verified_closed:
+    command: "echo Slice verification complete"
 ```
 
 ---
@@ -120,32 +123,38 @@ pip install -r requirements.txt
 
 ### 2. Check Workflow Status
 
+From a clone:
 ```bash
-python scripts/orchestrator.py status
+python -m scripts.orchestrator status --dir docs/superpowers
+```
+
+When installed as a plugin:
+```bash
+python "/abs/path/to/plugin/scripts/orchestrator.py" status --dir docs/superpowers
 ```
 
 ### 3. Dispatch Agent (Generic)
 
 ```bash
 # Dispatch any configured agent by role:
-python scripts/orchestrator.py dispatch-agent --role planner --file docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
+python -m scripts.orchestrator dispatch-agent --role planner --file docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
 
 # Override model at runtime:
-python scripts/orchestrator.py dispatch-agent --role executor --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --model claude-sonnet-4
+python -m scripts.orchestrator dispatch-agent --role executor --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --model claude-sonnet-4
 ```
 
 ### 4. Legacy Aliases (Backward Compatible)
 
 ```bash
-python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
-python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
+python -m scripts.orchestrator dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
+python -m scripts.orchestrator dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
 ```
 
 ### 5. Set Status & Trigger Hooks
 
 ```bash
-python scripts/orchestrator.py set-status --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --status PLAN_APPROVED
-python scripts/orchestrator.py trigger-hook --event on_execution_complete --dir .
+python -m scripts.orchestrator set-status --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --status PLAN_APPROVED
+python -m scripts.orchestrator trigger-hook --event on_slice_executor_start --dir .
 ```
 
 ---
@@ -180,6 +189,9 @@ superpowers-multiagents/
 ├── scripts/
 │   ├── orchestrator.py         # CLI entry point & command handlers
 │   ├── config.py               # DEFAULT_CONFIG & agents.yaml loader
+│   ├── errors.py               # Exception hierarchy
+│   ├── paths.py                # Runtime artifact layout
+│   ├── runner.py               # Supervisor for background agent execution
 │   ├── frontmatter.py          # YAML frontmatter parsing & atomic updates
 │   ├── git_ops.py              # Git worktree & merge operations
 │   ├── hooks.py                # Infrastructure hook execution
@@ -192,9 +204,16 @@ superpowers-multiagents/
 │       ├── opencode.py         # OpenCode CLI adapter (default)
 │       └── loader.py           # Dynamic adapter resolution & custom loading
 ├── tests/
-│   └── test_orchestrator.py    # Pytest test suite (36 tests)
+│   ├── test_orchestrator.py    # Pytest test suite
+│   ├── test_docs_consistency.py # Documentation and metadata verification
+│   ├── test_set_status.py      # Status transition tests
+│   ├── test_hook_events.py     # Hook event firing tests
+│   └── ...
+├── .superpowers/
+│   ├── logs/                   # Runtime execution logs (created on dispatch)
+│   └── locks/                  # Slice lock files (created on dispatch)
 ├── package.json
-├── requirements.txt            # Python dependencies (ruamel.yaml)
+├── requirements.txt            # Python dependencies (ruamel.yaml, pytest)
 └── README.md
 ```
 

@@ -5,6 +5,17 @@ description: "Use when managing milestones, tracks, vertical slices, delegating 
 
 # Multi-Agent Workflow & Lifecycle Orchestrator
 
+## Resolving the orchestrator path
+
+The orchestrator ships with this plugin, not with the user's project. Resolve
+it as `<skill base directory>/../../scripts/orchestrator.py` — the base
+directory is announced when this skill is loaded. If this text was injected at
+session start, the absolute path is given at the top of the injected block;
+prefer that. Run every command from the user's project directory: the path
+locates the orchestrator, the working directory locates the project.
+
+---
+
 This skill coordinates an N-level LLM architecture across configurable harnesses, providers, and models using a declarative YAML configuration and Markdown frontmatter state machine tracking.
 
 ## Hierarchy: Milestone ➔ Track ➔ Slice ➔ Plan ➔ Code
@@ -40,16 +51,17 @@ The **state machine** (statuses and transitions) is also configurable via the `s
 
 1. **Agent 1 (Fable 5 - Claude Desktop):** Milestone & Track Architect. Designs system boundaries, domain models, and defines Tracks (`track-N`) containing Vertical Slices (`slice-N`) inside `docs/superpowers/milestones/YYYY-MM-DD-milestone-N.md`.
 2. **Agent 2 (Opus 5 - Claude Desktop):** Vertical Slice Architect & Auditor. Selects a Track, designs `docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md` with Code Anchors & Contracts. Presents spec to user (`SPEC_APPROVED`). Audits plans (`PLAN_APPROVED`) and code diffs (`VERIFIED_CLOSED`).
-3. **Agent 3 (Kimi K3 - OpenCode CLI, configurable):** Implementation Planner. Triggered when status is `SPEC_APPROVED`. Uses `writing-plans` skill to generate `docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md`. Sets status to `PLAN_GENERATED`.
-4. **Agent 4 (Minimax M3 - OpenCode CLI, configurable):** TDD Executor. Triggered when status is `PLAN_APPROVED`. Executes tasks step-by-step using TDD. Sets status to `EXECUTION_COMPLETE`.
+3. **Agent 3 (Kimi K3 - OpenCode CLI, configurable):** Implementation Planner. Triggered when status is `SPEC_APPROVED`. Uses `writing-plans` skill to generate `docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md`. The orchestrator sets status to `PLAN_GENERATED` from the planner's exit code.
+4. **Agent 4 (Minimax M3 - OpenCode CLI, configurable):** TDD Executor. Triggered when status is `PLAN_APPROVED`. Executes tasks step-by-step using TDD. The orchestrator sets status to `EXECUTION_COMPLETE` (on exit 0) or `FAILED` (on exit !=0) from the executor's exit code.
 
 ---
 
-## The 9 Lifecycle States of a Vertical Slice (Default)
+## The Lifecycle States of a Vertical Slice (Default)
 
 ```
 DRAFT_SPEC ➔ SPEC_APPROVED (Human Gate) ➔ PLANNING ➔ PLAN_GENERATED ➔ PLAN_APPROVED (Opus 5 Audit) ➔ EXECUTING ➔ EXECUTION_COMPLETE ➔ VERIFIED_CLOSED (Opus 5 Audit)
                                                                                         ↘ MERGE_CONFLICT ↗
+                                                                     ↘ FAILED (orchestrator exit !=0) ↗
 ```
 
 **State transition rules are strictly enforced.** The orchestrator rejects invalid jumps (e.g. `DRAFT_SPEC` → `VERIFIED_CLOSED`). Custom statuses and transitions can be defined in `.superpowers/agents.yaml`.
@@ -66,42 +78,42 @@ The orchestrator uses **file-based locks** (`.superpowers/locks/<slice_id>.lock`
 
 ### 1. Check Status of All Slices & Milestones
 ```bash
-python scripts/orchestrator.py status
+python "<orchestrator>" status --dir docs/superpowers
 ```
 
 ### 2. Generic Agent Dispatch (New)
 ```bash
 # Dispatch any configured agent by role:
-python scripts/orchestrator.py dispatch-agent --role planner --file docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md
+python "<orchestrator>" dispatch-agent --role planner --file docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md
 
 # Override model at runtime:
-python scripts/orchestrator.py dispatch-agent --role executor --file docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md --model claude-sonnet-4
+python "<orchestrator>" dispatch-agent --role executor --file docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md --model claude-sonnet-4
 ```
 
 ### 3. Legacy Aliases (Backward Compatible)
 ```bash
 # These still work and map to dispatch-agent internally:
-python scripts/orchestrator.py dispatch-planner --spec docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md
-python scripts/orchestrator.py dispatch-executor --plan docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md
+python "<orchestrator>" dispatch-planner --spec docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md
+python "<orchestrator>" dispatch-executor --plan docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md
 ```
 
 ### 4. Approve Plan & Set Status
 ```bash
-python scripts/orchestrator.py set-status --file docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md --status PLAN_APPROVED
+python "<orchestrator>" set-status --file docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md --status PLAN_APPROVED
 ```
 
 ### 5. Verify & Close Slice (When Execution is `EXECUTION_COMPLETE`)
 ```bash
-python scripts/orchestrator.py set-status --file docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md --status VERIFIED_CLOSED
+python "<orchestrator>" set-status --file docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md --status VERIFIED_CLOSED
 ```
 And check off `[x]` in the corresponding Track in `docs/superpowers/milestones/YYYY-MM-DD-milestone-N.md`.
 
 ### 6. Trigger Infrastructure Hooks
 ```bash
-python scripts/orchestrator.py trigger-hook --event on_execution_complete --dir .
+python "<orchestrator>" trigger-hook --event on_slice_executor_start --dir .
 ```
 
 ### 7. View Execution Summary (For Opus 5 Audit)
 ```bash
-python scripts/orchestrator.py summary --slice slice-N
+python "<orchestrator>" summary --slice slice-N
 ```
