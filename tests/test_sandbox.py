@@ -301,6 +301,44 @@ def test_teardown_none_touches_nothing(tmp_path, stub_docker):
     assert sandbox.read_state(tmp_path, "feat/alpha") is not None
 
 
+def test_status_rows_reflects_real_container_state_not_address_availability(
+    tmp_path, stub_docker, monkeypatch
+):
+    """`_probe`'s ephemeral-port bind (port=0) succeeds almost unconditionally
+    regardless of whether the stack's real published ports are occupied, so
+    it cannot distinguish a running stack from a stopped one -- confirmed
+    live: `docker ps` showed a stack `Up ... (healthy)` at the exact moment
+    the old `status_rows` reported it 'stopped'. `docker compose ps` output
+    is the real signal; a non-empty listing means docker still sees
+    containers for that project.
+    """
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    config = _sandbox_config()
+    env = sandbox.ensure_up("feat/alpha", tmp_path, config)
+
+    # Replace the shared stub so this test controls what `ps` prints, instead
+    # of the fixed always-healthy output the health-gate tests rely on.
+    stub_docker.script.write_text(
+        "import os, sys\n"
+        "if 'ps' in sys.argv:\n"
+        "    sys.stdout.write(os.environ.get('SUPERPOWERS_DOCKER_PS_OUTPUT', ''))\n"
+        "    sys.exit(0)\n"
+        "sys.exit(int(os.environ.get('SUPERPOWERS_DOCKER_EXIT', '0')))\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv(
+        "SUPERPOWERS_DOCKER_PS_OUTPUT",
+        '[{"Service": "web", "State": "running"}]',
+    )
+    rows = sandbox.status_rows(tmp_path, config)
+    assert rows == [("feat/alpha", env["LOOPBACK_IP"], "running")]
+
+    monkeypatch.setenv("SUPERPOWERS_DOCKER_PS_OUTPUT", "")
+    rows = sandbox.status_rows(tmp_path, config)
+    assert rows == [("feat/alpha", env["LOOPBACK_IP"], "stopped")]
+
+
 def test_allocation_is_serialised(tmp_path, monkeypatch):
     """A second allocator must not run while the first holds the lock."""
     from scripts.locks import acquire_slice_lock

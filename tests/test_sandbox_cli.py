@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 
 import pytest
 
@@ -112,6 +113,45 @@ def test_env_without_state_exits_nonzero(tmp_project, stub_docker):
     with pytest.raises(SystemExit) as excinfo:
         cmd_sandbox(_args("env", dir=str(tmp_project), branch="feat/none"))
     assert excinfo.value.code != 0
+
+
+def test_misplaced_flag_after_action_fails_closed(tmp_project, stub_docker, capsys):
+    """`sandbox status --dir X` is what real argparse produces when a flag is
+    placed after the action: `action` (REMAINDER's positional match) with
+    the swallowed tokens landing in `cmd` and `dir` left at its default. This
+    must never be silently accepted -- it means the config the rest of
+    `cmd_sandbox` loads is not the one the user asked for.
+    """
+    args = _args("status", cmd=["--dir", str(tmp_project)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_sandbox(args)
+
+    assert excinfo.value.code != 0
+    out = capsys.readouterr().out
+    assert "status" in out
+    assert "--dir" in out
+    assert tmp_project.name in out
+    assert "BEFORE the action" in out
+
+
+def test_exec_action_is_unaffected_by_the_misplaced_flag_guard(tmp_project, stub_docker):
+    """`exec`'s trailing `cmd` is its whole point and must still pass through."""
+    from scripts import sandbox
+
+    (tmp_project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    config = {"sandbox": {"enabled": True, "compose_file": "docker-compose.yml",
+                          "env": {}, "teardown": {}}}
+    sandbox.ensure_up("feat/alpha", tmp_project, config)
+    _enable_sandbox(tmp_project)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_sandbox(_args(
+            "exec", dir=str(tmp_project), branch="feat/alpha",
+            cmd=["--", sys.executable, "-c", "pass"],
+        ))
+
+    assert excinfo.value.code == 0
 
 
 def test_teardown_refuses_volume_destruction_without_yes(tmp_project, stub_docker):

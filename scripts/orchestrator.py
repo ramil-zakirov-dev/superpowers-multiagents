@@ -335,6 +335,21 @@ def _quote_powershell(value: str) -> str:
 
 def cmd_sandbox(args):
     """Human-facing sandbox lifecycle. The orchestrator uses the module directly."""
+    # `cmd` is `nargs=argparse.REMAINDER`, needed so `sandbox exec -- cmd --flag`
+    # can pass arbitrary flags through to the wrapped command untouched. But
+    # REMAINDER is greedy: for every other action, anything landing here means
+    # a flag was placed after the action and got silently swallowed instead of
+    # parsed (e.g. `sandbox status --dir X` -> action='status', cmd=['--dir',
+    # 'X'], dir=''). Fail closed instead of quietly running with the wrong
+    # (default) config.
+    if args.action != "exec" and args.cmd:
+        print(
+            f"Error: unexpected extra argument(s) after '{args.action}': {args.cmd}\n"
+            f"Flags like --dir/--branch/--shell/--yes must come BEFORE the action:\n"
+            f"  sandbox --dir X {args.action}   (not: sandbox {args.action} --dir X)"
+        )
+        sys.exit(1)
+
     project_root = Path(args.dir).resolve() if args.dir else Path.cwd()
 
     try:
@@ -348,7 +363,7 @@ def cmd_sandbox(args):
 
     try:
         if args.action == "status":
-            rows = sandbox.status_rows(project_root)
+            rows = sandbox.status_rows(project_root, config)
             if not rows:
                 print("No sandbox stacks are tracked.")
             for name, ip, state in rows:

@@ -352,11 +352,28 @@ def tear_down(branch: str, project_root, config: dict, mode: str) -> None:
         clear_state(project_root, branch)
 
 
-def status_rows(project_root) -> list:
-    """(branch, ip, state) for every tracked stack. `state` is running|stopped."""
+def status_rows(project_root, config: dict) -> list:
+    """(branch, ip, state) for every tracked stack. `state` is running|stopped.
+
+    Checks real container state via `docker compose ps`, not address
+    availability: `_probe` binds an *ephemeral* port (port=0) to check whether
+    an IP alias is configured on the host, which is its actual job for
+    allocation -- but binding an ephemeral port succeeds almost
+    unconditionally regardless of whether the stack's real published ports
+    (5432, 6333, ...) are occupied, so it cannot tell a running stack from a
+    stopped one. A non-empty `ps` listing is a robust, version-tolerant
+    signal instead: the JSON shape `docker compose ps` emits has varied
+    across versions, so this deliberately does not parse specific fields out
+    of it.
+    """
+    sandbox_cfg = config.get("sandbox") or {}
     rows = []
     for record in list_states(project_root):
-        probe = _probe(record.ip, port=0)
-        rows.append((record.branch, record.ip,
-                     "stopped" if probe == "free" else "running"))
+        env = render_env(sandbox_cfg, record.ip, record.project_name)
+        result = _compose(
+            Path(project_root), sandbox_cfg, record,
+            ["ps", "--format", "json"], env, capture=True,
+        )
+        state = "running" if (result.stdout or "").strip() else "stopped"
+        rows.append((record.branch, record.ip, state))
     return rows
