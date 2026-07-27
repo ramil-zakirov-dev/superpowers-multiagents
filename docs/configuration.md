@@ -307,3 +307,40 @@ unset, rather than silently publishing on every interface or colliding with
 another slice's stack on `127.0.0.1`. This is the compose file's half of the
 contract — the orchestrator's half is injecting `LOOPBACK_IP` before every
 `ensure_up`.
+
+### CLI
+
+Human-facing lifecycle control, exposed as a subcommand of the same entry
+point used for dispatch — `orchestrator.py sandbox <action>`.
+
+**Flags must precede the action.** `action` is parsed as `nargs=REMAINDER`
+(needed so `exec -- <command>` can pass arbitrary flags through untouched),
+which means anything after the action is swallowed as part of `exec`'s
+command instead of being parsed as a flag:
+
+```bash
+# Correct: flags before the action
+python -m scripts.orchestrator sandbox --dir . status
+
+# Wrong: silently ignores --dir and runs against the default project root
+python -m scripts.orchestrator sandbox status --dir .
+```
+
+Every action other than `exec` fails closed with a clear error if anything
+lands after it, rather than quietly running with the wrong config.
+
+| Action | What it does |
+|--------|---------------|
+| `up` | `sandbox.ensure_up(...)` — allocates an address if needed, brings the stack up, waits on `health_service` if configured. |
+| `restart` | Tears down containers (keeping volumes), then brings the stack back up on the same address. |
+| `status` | Lists every tracked stack: branch, loopback address, and `running`/`stopped` (from `docker compose ps`, not address availability). |
+| `env --shell posix\|powershell\|json` | Prints the stack's environment in the requested format — `export KEY=VALUE`, `$env:KEY = "..."`, or a JSON object. |
+| `exec -- <command...>` | Runs `<command...>` with the stack's environment merged in, in the project root. Everything after `--` is passed through untouched. |
+| `teardown --yes` | Destroys containers and volumes and deletes the state record. Refuses (exit code 2) without `--yes`. |
+
+All actions accept `--dir <project root>` (default: cwd) and `--branch
+<branch>` (default: current branch). `up`, `restart`, `env`, `exec`, and
+`teardown` all require `sandbox.enabled: true` in `.superpowers/agents.yaml`
+— against a disabled or absent `sandbox` block, `up`/`restart`/`teardown`
+print a clear error and exit non-zero rather than crashing or claiming
+success, and `env`/`exec` report "no sandbox state" for the branch.

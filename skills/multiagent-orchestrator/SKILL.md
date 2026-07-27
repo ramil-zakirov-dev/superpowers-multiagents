@@ -131,3 +131,19 @@ python "<orchestrator>" trigger-hook --event on_slice_executor_start --dir .
 ```bash
 python "<orchestrator>" summary --slice slice-N
 ```
+
+### 8. Per-Slice Infrastructure Sandbox (Optional, opt-in)
+
+Only relevant when `.superpowers/agents.yaml` declares a `sandbox` block
+(see [docs/configuration.md](../../docs/configuration.md#sandbox-per-slice-infrastructure)).
+**Flags must precede the action** — `sandbox --dir X <action>`, not
+`sandbox <action> --dir X`.
+
+```bash
+python "<orchestrator>" sandbox --dir . status
+python "<orchestrator>" sandbox --dir . up
+python "<orchestrator>" sandbox --dir . restart
+python "<orchestrator>" sandbox --dir . env --shell posix
+python "<orchestrator>" sandbox --dir . exec -- npm test
+python "<orchestrator>" sandbox --dir . teardown --yes
+```

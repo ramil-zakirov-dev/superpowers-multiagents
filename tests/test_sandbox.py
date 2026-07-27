@@ -343,6 +343,33 @@ def test_status_rows_reflects_real_container_state_not_address_availability(
     assert rows == [("feat/alpha", env["LOOPBACK_IP"], "stopped")]
 
 
+def test_status_rows_treats_a_nonzero_ps_exit_as_stopped(
+    tmp_path, stub_docker, monkeypatch
+):
+    """`docker compose ps` can fail for reasons unrelated to whether
+    containers are up (a broken compose file, an unreachable daemon). That
+    must be an explicit, intentional 'stopped' -- not an accident of empty
+    stdout. Print stdout that would otherwise read as 'running' but force a
+    non-zero exit, proving the row is decided by returncode first.
+    """
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    config = _sandbox_config()
+    env = sandbox.ensure_up("feat/alpha", tmp_path, config)
+
+    stub_docker.script.write_text(
+        "import sys\n"
+        "if 'ps' in sys.argv:\n"
+        "    sys.stdout.write('[{\"Service\": \"web\", \"State\": \"running\"}]')\n"
+        "    sys.exit(1)\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+
+    rows = sandbox.status_rows(tmp_path, config)
+
+    assert rows == [("feat/alpha", env["LOOPBACK_IP"], "stopped")]
+
+
 def test_allocation_is_serialised(tmp_path, monkeypatch):
     """A second allocator must not run while the first holds the lock."""
     from scripts.locks import acquire_slice_lock

@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 
 import pytest
@@ -149,6 +150,68 @@ def test_exec_action_is_unaffected_by_the_misplaced_flag_guard(tmp_project, stub
         cmd_sandbox(_args(
             "exec", dir=str(tmp_project), branch="feat/alpha",
             cmd=["--", sys.executable, "-c", "pass"],
+        ))
+
+    assert excinfo.value.code == 0
+
+
+def test_exec_reports_missing_command_cleanly_instead_of_a_traceback(
+    tmp_project, stub_docker, capsys
+):
+    """A nonexistent command must produce a clean, actionable error -- not a
+    raw FileNotFoundError traceback escaping `subprocess.run`."""
+    from scripts import sandbox
+
+    (tmp_project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    config = {"sandbox": {"enabled": True, "compose_file": "docker-compose.yml",
+                          "env": {}, "teardown": {}}}
+    sandbox.ensure_up("feat/alpha", tmp_project, config)
+    _enable_sandbox(tmp_project)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_sandbox(_args(
+            "exec", dir=str(tmp_project), branch="feat/alpha",
+            cmd=["--", "this-command-does-not-exist-superpowers-xyz"],
+        ))
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "command not found" in out
+    assert "Traceback" not in out
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="PATHEXT shim resolution (npm.cmd-style) is a Windows-only concern",
+)
+def test_exec_resolves_a_windows_cmd_shim_without_shell_true(
+    tmp_project, stub_docker, monkeypatch
+):
+    """The real-world bug: `npm --version` (a .cmd shim on Windows) raises
+    FileNotFoundError from a bare `subprocess.run([...])` list, because
+    CreateProcess only does PATHEXT resolution under a shell. `shutil.which`
+    does that resolution itself, so a bare command name without an extension
+    must still resolve and run when a matching shim is on PATH.
+    """
+    from scripts import sandbox
+
+    (tmp_project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    config = {"sandbox": {"enabled": True, "compose_file": "docker-compose.yml",
+                          "env": {}, "teardown": {}}}
+    sandbox.ensure_up("feat/alpha", tmp_project, config)
+    _enable_sandbox(tmp_project)
+
+    shim_dir = tmp_project / "shim"
+    shim_dir.mkdir()
+    (shim_dir / "superpowers_shim_tool.cmd").write_text(
+        "@exit /b 0\r\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("PATH", str(shim_dir) + os.pathsep + os.environ.get("PATH", ""))
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_sandbox(_args(
+            "exec", dir=str(tmp_project), branch="feat/alpha",
+            cmd=["--", "superpowers_shim_tool"],
         ))
 
     assert excinfo.value.code == 0

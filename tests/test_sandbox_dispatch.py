@@ -106,9 +106,38 @@ def test_slice_context_reaches_the_hook(tmp_project, demo_spec, stub_docker):
 
 
 def test_no_sandbox_block_means_no_docker(tmp_project, demo_spec, stub_docker):
-    """Inertness guard: docker must not leak into the orchestrator's contract."""
+    """Inertness guard: docker must not leak into the orchestrator's contract.
+
+    AC6 requires BOTH halves: no docker invocation (checked below via
+    stub_docker) AND no sandbox variable injected into the dispatched
+    agent's environment. Reuses the marker-file pattern from
+    `test_slice_context_reaches_the_hook` to observe the env the hook (and
+    therefore the agent) actually received, since there is no sandbox state
+    to query directly when no `sandbox` block is configured.
+    """
+    marker = tmp_project / "hook-env.txt"
+    (tmp_project / ".superpowers" / "hooks.yaml").write_text(
+        "hooks:\n"
+        "  on_slice_planner_start:\n"
+        f'    command: "python -c \\"import os;open(r\'{marker.as_posix()}\',\'w\')'
+        '.write(os.environ.get(\'LOOPBACK_IP\',\'\')+chr(10)+'
+        'os.environ.get(\'COMPOSE_PROJECT_NAME\',\'\'))\\""\n',
+        encoding="utf-8",
+    )
+
     cmd_dispatch_agent(argparse.Namespace(role="planner", file=str(demo_spec), model=None))
     assert stub_docker.calls == []
+
+    lines = marker.read_text(encoding="utf-8").splitlines()
+    loopback_ip = lines[0] if lines else ""
+    compose_project = lines[1] if len(lines) > 1 else ""
+    assert loopback_ip == "", (
+        f"LOOPBACK_IP leaked into the agent's env with no sandbox block: {loopback_ip!r}"
+    )
+    assert compose_project == "", (
+        f"COMPOSE_PROJECT_NAME leaked into the agent's env with no sandbox "
+        f"block: {compose_project!r}"
+    )
 
 
 def test_non_isolated_agent_attaches_but_never_starts_a_stack(
@@ -180,6 +209,44 @@ def test_failed_slice_stops_containers_but_keeps_volumes(
     down = [c for c in stub_docker.calls if "down" in c["argv"]][-1]
     assert "-v" not in down["argv"], "a failed slice must keep its volumes"
     assert sandbox.read_state(tmp_project, "feat/slice-01-demo") is not None
+
+
+def test_non_isolated_agent_failure_does_not_tear_down_the_humans_stack(
+    tmp_project, demo_spec, stub_docker
+):
+    """Architect-approved fix: teardown-on-failure must only apply to agents
+    that own a stack's lifecycle. A non-isolated agent (e.g. a `planner`)
+    never brings a stack up -- it only ever attaches to one that already
+    exists on the human's own branch -- so its crash must not stop the
+    human's own containers over an unrelated failure.
+    """
+    from scripts import sandbox
+    from scripts.git_ops import current_branch
+
+    _enable_sandbox(tmp_project)
+    failing_planner = SANDBOX_AGENTS.replace("executor:", "planner:").replace(
+        "isolated_worktree: true", "isolated_worktree: false"
+    ).replace("model: \"print('stub ok')\"", "model: \"import sys; sys.exit(3)\"")
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        failing_planner, encoding="utf-8"
+    )
+
+    # The human's own stack is already up on their own branch, independent of
+    # any dispatch -- exactly the scenario the bug clobbers.
+    branch = current_branch(tmp_project)
+    config = {"sandbox": {"enabled": True, "compose_file": "docker-compose.yml",
+                          "env": {}, "teardown": {}}}
+    sandbox.ensure_up(branch, tmp_project, config)
+
+    cmd_dispatch_agent(_args(demo_spec, role="planner"))
+
+    _wait_for(lambda: not lock_path(tmp_project, "slice-01-demo").exists())
+
+    down_calls = [c for c in stub_docker.calls if "down" in c["argv"]]
+    assert down_calls == [], (
+        f"a non-isolated agent's failure tore down the human's stack: {down_calls}"
+    )
+    assert sandbox.read_state(tmp_project, branch) is not None
 
 
 def test_failure_hook_observes_the_stack_before_teardown(

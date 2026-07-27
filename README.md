@@ -178,7 +178,7 @@ different worktrees never fight over the same host port. See
 for the full schema, the template tokens, and the three teardown modes.
 
 ```bash
-python -m scripts.orchestrator sandbox status --dir .
+python -m scripts.orchestrator sandbox --dir . status
 ```
 
 ```

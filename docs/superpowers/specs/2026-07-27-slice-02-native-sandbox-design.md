@@ -241,8 +241,18 @@ story uniform.
 
 | Trigger | Site | Mode |
 |---|---|---|
-| non-zero agent exit | `runner._record_outcome` | `teardown.on_failed` |
+| non-zero agent exit, **isolated agent only** | `runner._record_outcome` | `teardown.on_failed` |
 | status becomes `VERIFIED_CLOSED` | `cmd_set_status` | `teardown.on_verified_closed` |
+
+The failure-teardown trigger applies only to agents with
+`isolated_worktree: true`. A non-isolated agent never owns a stack's
+lifecycle (§4.2 — it only ever `resolve_env`s an existing stack, never
+`ensure_up`s one), so `cmd_dispatch_agent` passes the runner an empty
+`--sandbox-branch` for a non-isolated agent regardless of what branch it
+actually ran on. The runner's existing gate,
+`if exit_code != 0 and sandbox_branch:`, then naturally skips teardown for
+it. Without this, a non-isolated agent's crash would tear down the human's
+own active stack over an unrelated failure.
 
 The trigger is the transition actually being applied, not the merge that
 usually precedes it. A slice may legitimately reach `VERIFIED_CLOSED` from

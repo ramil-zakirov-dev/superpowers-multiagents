@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -243,8 +244,9 @@ def cmd_dispatch_agent(args):
     prompt_template = agent_config.get("prompt_template", "Process {file}")
     task_prompt = prompt_template.format(file=target_file)
 
+    isolated = agent_config.get("isolated_worktree", False)
     try:
-        if agent_config.get("isolated_worktree", False):
+        if isolated:
             cwd = create_git_worktree(slice_id, project_root)
             sandbox_branch = f"feat/{slice_id}"
             sandbox_env = sandbox.ensure_up(sandbox_branch, project_root, config)
@@ -295,6 +297,15 @@ def cmd_dispatch_agent(args):
     # 7. Spawn the supervisor
     logs_dir(project_root).mkdir(parents=True, exist_ok=True)
 
+    # Teardown-on-failure (runner.py's `if exit_code != 0 and sandbox_branch`)
+    # must only ever fire for an agent that owns the stack's lifecycle. A
+    # non-isolated agent only ever resolve_env()s an existing stack -- it
+    # never brings one up -- so its crash must not tear down infrastructure
+    # that belongs to whoever (or whatever) does own it, e.g. the human's own
+    # active stack on their own branch. Passing an empty branch here, rather
+    # than the real one, is what makes the runner's existing gate skip it.
+    teardown_branch = sandbox_branch if isolated else ""
+
     runner_argv = [
         sys.executable, "-m", "scripts.runner",
         "--role", role,
@@ -303,7 +314,7 @@ def cmd_dispatch_agent(args):
         "--lock", str(lock_file),
         "--log", str(log_file),
         "--cwd", str(cwd),
-        "--sandbox-branch", sandbox_branch,
+        "--sandbox-branch", teardown_branch,
         "--", *[str(part) for part in agent_argv],
     ]
 
@@ -360,6 +371,7 @@ def cmd_sandbox(args):
         sys.exit(1)
 
     branch = args.branch or current_branch(project_root)
+    sandbox_cfg = config.get("sandbox") or {}
 
     try:
         if args.action == "status":
@@ -371,6 +383,12 @@ def cmd_sandbox(args):
             return
 
         if args.action in ("up", "restart"):
+            if not sandbox_cfg.get("enabled"):
+                print(
+                    "Error: sandbox.enabled is false in .superpowers/agents.yaml; "
+                    "nothing to bring up."
+                )
+                sys.exit(1)
             if args.action == "restart":
                 sandbox.tear_down(branch, project_root, config, "containers")
             env = sandbox.ensure_up(branch, project_root, config)
@@ -378,7 +396,12 @@ def cmd_sandbox(args):
             return
 
         if args.action == "teardown":
-            mode = "volumes" if args.yes else "containers"
+            if not sandbox_cfg.get("enabled"):
+                print(
+                    "Error: sandbox.enabled is false in .superpowers/agents.yaml; "
+                    "nothing to tear down."
+                )
+                sys.exit(1)
             if not args.yes:
                 print(
                     f"Refusing to destroy volumes for {branch} without --yes. "
@@ -386,6 +409,7 @@ def cmd_sandbox(args):
                     f"--yes to destroy data."
                 )
                 sys.exit(2)
+            mode = "volumes"
             sandbox.tear_down(branch, project_root, config, mode)
             print(f"Stack for {branch} torn down ({mode}).")
             return
@@ -411,6 +435,16 @@ def cmd_sandbox(args):
             if not command:
                 print("Error: `sandbox exec` needs a command after `--`.")
                 sys.exit(1)
+            # subprocess.run with a bare argv list cannot resolve Windows
+            # .cmd/.bat shims (e.g. npm.cmd) -- CreateProcess only searches
+            # PATHEXT-registered extensions under a shell, and shell=True is
+            # off the table for this command. shutil.which does that PATHEXT
+            # resolution itself, without a shell.
+            resolved = shutil.which(command[0])
+            if resolved is None:
+                print(f"Error: command not found: {command[0]}")
+                sys.exit(1)
+            command = [resolved, *command[1:]]
             sys.exit(subprocess.run(
                 command, cwd=str(project_root), env={**os.environ, **env}
             ).returncode)

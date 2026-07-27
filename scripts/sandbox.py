@@ -175,8 +175,13 @@ def render_env(sandbox_cfg: dict, ip: str, project: str) -> dict:
     LOOPBACK_IP and COMPOSE_PROJECT_NAME are injected unconditionally and are
     not declarable in config -- they are the contract, not a setting. Process
     environment expansion runs first so a project can keep a real credential
-    in .env rather than in a tracked config file; token substitution runs
-    after, so an expanded value containing braces is never re-interpreted.
+    in .env rather than in a tracked config file; token substitution then runs
+    on that already-expanded string via plain `str.replace`, so if an expanded
+    value happens to itself contain the literal substring `{ip}` or
+    `{project}` -- e.g. a secret pulled from `.env` that contains one of those
+    substrings by coincidence -- it IS re-interpreted and rewritten. This is
+    the ordinary risk of naive string substitution, not a guarantee against
+    it; a config's `${VAR}` values should avoid those literal substrings.
     """
     rendered = {"LOOPBACK_IP": ip, "COMPOSE_PROJECT_NAME": project}
     for name, template in (sandbox_cfg.get("env") or {}).items():
@@ -374,6 +379,14 @@ def status_rows(project_root, config: dict) -> list:
             Path(project_root), sandbox_cfg, record,
             ["ps", "--format", "json"], env, capture=True,
         )
-        state = "running" if (result.stdout or "").strip() not in ("", "[]") else "stopped"
+        if result.returncode != 0:
+            # `ps` itself failed -- a broken compose file, an unreachable
+            # daemon, anything unrelated to whether containers are up. Treat
+            # this as "stopped" explicitly, on purpose, rather than falling
+            # through to inspect stdout that may be empty for that unrelated
+            # reason and happen to look the same.
+            state = "stopped"
+        else:
+            state = "running" if (result.stdout or "").strip() not in ("", "[]") else "stopped"
         rows.append((record.branch, record.ip, state))
     return rows
