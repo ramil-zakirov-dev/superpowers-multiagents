@@ -58,6 +58,30 @@ def test_plugin_manifest_has_distribution_metadata():
     assert manifest["version"] == "2.0.0"
 
 
+def test_no_shipped_text_contains_a_template_placeholder():
+    """A published plugin must not ship the scaffold's own placeholders."""
+    placeholders = ("your-username", "your-org", "YOUR_NAME", "<your-")
+    for filename, text in SHIPPED_TEXT.items():
+        for placeholder in placeholders:
+            assert placeholder not in text, (
+                f"{filename} still contains the placeholder '{placeholder}'"
+            )
+
+
+def test_manifest_urls_are_resolvable_and_consistent():
+    manifest = json.loads(
+        (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    homepage, repository = manifest["homepage"], manifest["repository"]
+    assert homepage == repository, "homepage and repository must name the same project"
+    assert repository.startswith("https://github.com/"), repository
+    owner_and_name = repository[len("https://github.com/"):].split("/")
+    assert len(owner_and_name) == 2 and all(owner_and_name), (
+        f"repository URL is not owner/name shaped: {repository}"
+    )
+    assert repository in README, "README does not point at the manifest's repository"
+
+
 def test_package_json_version_matches_plugin_manifest():
     plugin = json.loads(
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")

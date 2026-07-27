@@ -207,7 +207,8 @@ points of the planner and executor roles.
 ### 1. Installation
 
 ```bash
-git clone https://github.com/your-username/superpowers-multiagents.git
+git clone https://github.com/ramil-zakirov-dev/superpowers-multiagents.git
+cd superpowers-multiagents
 pip install -r requirements.txt
 ```
 
