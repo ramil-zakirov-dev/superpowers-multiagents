@@ -151,6 +151,13 @@ hooks:
     command: "echo Slice verification complete"
 ```
 
+**Per-slice infrastructure isolation via this hook is superseded.**
+`on_slice_executor_start` fires before the dispatched slice's branch/worktree
+exists, so a branch-derived address resolves the same for every slice in
+flight and parallel slices silently share one stack. Use the sandbox feature
+below instead — see
+[docs/configuration.md](docs/configuration.md#sandbox-per-slice-infrastructure).
+
 ---
 
 ## 🐳 Parallel slices need isolated infrastructure

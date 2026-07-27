@@ -68,6 +68,19 @@ agents:
     isolated_worktree: true
     prompt_template: 'Execute implementation plan at {file} using TDD subagent execution. Check off tasks in plan as completed.'
     extra_args: []
+
+# Per-slice infrastructure sandbox (optional; omitted or enabled: false = no docker call ever made)
+sandbox:
+  enabled: true                      # opt in; false (the default) means no docker call is ever made
+  compose_file: docker-compose.yml   # path to the compose file, relative to the project root
+  health_service: postgres           # optional; a compose service to await via `docker compose ps`
+  health_timeout: 60                 # seconds to wait for health_service to report healthy
+  env:
+    pg_dsn: "postgresql://user:pass@{ip}:5432/db"
+    qdrant_url: "http://{ip}:6333"
+  teardown:
+    on_verified_closed: volumes      # volumes | containers | none
+    on_failed: containers
 ```
 
 ## Agent Properties
@@ -174,6 +187,15 @@ hooks:
   on_slice_verified_closed:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
 ```
+
+**This particular use of a hook — per-slice infrastructure isolation — is superseded.**
+`on_slice_executor_start` fires before the dispatched slice's branch/worktree
+exists, so a branch-derived address or compose project name resolves to the
+same value for every slice in flight, and parallel slices silently share one
+stack and corrupt each other's data. Use the
+[Sandbox (per-slice infrastructure)](#sandbox-per-slice-infrastructure) section
+below for this need; hooks remain the right tool for everything else (cache
+warming, notifications, non-sandbox environment prep).
 
 A failing `on_slice_{role}_start` aborts the dispatch **before** the slice's
 status is touched and releases the lock, so the slice stays at its entry gate.
