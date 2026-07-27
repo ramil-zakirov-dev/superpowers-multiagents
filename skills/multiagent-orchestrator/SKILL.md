@@ -1,6 +1,6 @@
 ---
 name: multiagent-orchestrator
-description: "Use when managing milestones, tracks, vertical slices, delegating planning/execution tasks to background CLI subagents (OpenCode, KimiCode, MimoCode, or custom), and tracking configurable lifecycle status in Markdown files."
+description: "Use when managing milestones, tracks, vertical slices, delegating planning/execution tasks to supervised background CLI subagents (OpenCode, or a custom harness adapter), and tracking configurable lifecycle status in Markdown files."
 ---
 
 # Multi-Agent Workflow & Lifecycle Orchestrator

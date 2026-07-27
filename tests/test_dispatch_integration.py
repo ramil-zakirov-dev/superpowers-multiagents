@@ -7,14 +7,20 @@ project fixture wires in a stub adapter.
 
 import argparse
 import json
+import os
+import signal
+import subprocess
 import time
 
 import pytest
 
+from scripts.errors import LockError
 from scripts.frontmatter import parse_frontmatter
 from scripts.git_ops import check_working_tree_clean
+from scripts.locks import acquire_slice_lock
 from scripts.orchestrator import cmd_dispatch_agent
 from scripts.paths import lock_path, log_path
+from scripts.utils import _is_process_alive
 
 
 def _args(spec, role="planner", model=None):
@@ -28,6 +34,52 @@ def _wait_for(predicate, timeout=30.0):
             return True
         time.sleep(0.2)
     return False
+
+
+def _use_slow_agent(project_root, seconds):
+    """Rewrite the project's agent so the stub sleeps instead of exiting at once.
+
+    The stub adapter passes `model` to `python -c`, so the model string is the
+    agent's whole behaviour.
+    """
+    (project_root / ".superpowers" / "agents.yaml").write_text(
+        "agents:\n"
+        "  planner:\n"
+        f'    model: "import time; time.sleep({seconds})"\n'
+        "    harness_adapter: 'stub_adapter.py'\n"
+        "    isolated_worktree: false\n",
+        encoding="utf-8",
+    )
+
+
+def _wait_for_lock_state(lock_file, state, timeout=30.0):
+    """Return the lock payload once it reaches `state`, or None on timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if lock_file.exists():
+            try:
+                data = json.loads(lock_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError, ValueError):
+                data = None
+            if data and data.get("state") == state:
+                return data
+        time.sleep(0.1)
+    return None
+
+
+def _kill_tree(pid):
+    """Stop a supervisor and the agent underneath it, so no test leaves stragglers."""
+    if not pid:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
+    else:
+        # dispatch spawns the supervisor with start_new_session=True, so its
+        # PID is the process-group leader.
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
 
 
 def test_dispatch_runs_the_agent_and_reaches_a_terminal_status(tmp_project, demo_spec):
@@ -82,13 +134,36 @@ def test_failing_start_hook_leaves_the_slice_untouched(tmp_project, demo_spec):
 
 
 def test_lock_records_a_live_supervisor(tmp_project, demo_spec):
+    """The lock must name a process that is actually alive, and refuse others.
+
+    The original defect was a lock naming the dispatcher, which exits within a
+    second of spawning: the lock went stale immediately and blocked nothing.
+    Asserting only `state in {starting, running}` passes against that defect
+    too, so this pins the claimed state, a live PID, and actual refusal.
+
+    The agent is made slow on purpose — with the default instant stub the
+    supervisor is usually gone before the assertions run, which is what made
+    the earlier version of this test racy.
+    """
+    _use_slow_agent(tmp_project, seconds=20)
     cmd_dispatch_agent(_args(demo_spec))
     lock_file = lock_path(tmp_project, "slice-01-demo")
-    if lock_file.exists():
-        data = json.loads(lock_file.read_text(encoding="utf-8"))
-        assert data["state"] in {"starting", "running"}
-        if data["state"] == "running":
-            assert data["pid"]
+
+    data = _wait_for_lock_state(lock_file, "running")
+    assert data is not None, "the supervisor never claimed the lock"
+
+    supervisor_pid = data["pid"]
+    try:
+        assert supervisor_pid, "lock claimed as running but carries no PID"
+        assert _is_process_alive(supervisor_pid), (
+            f"lock names PID {supervisor_pid}, which is not alive"
+        )
+        assert data["role"] == "planner"
+
+        with pytest.raises(LockError, match="slice-01-demo"):
+            acquire_slice_lock("slice-01-demo", tmp_project)
+    finally:
+        _kill_tree(supervisor_pid)
 
 
 def test_bad_adapter_leaves_the_slice_untouched(tmp_project, demo_spec):
