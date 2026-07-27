@@ -64,7 +64,7 @@ def _run_child(argv: list, cwd: Path, log_file: Path) -> int:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         handle = open(log_file, "w", encoding="utf-8", errors="replace")
     except OSError as exc:
-        print(f"[runner] could not create/open log file {log_file}: {exc}")
+        _safe_print(f"[runner] could not create/open log file {log_file}: {exc}")
         return 127
 
     with handle as log:
@@ -83,6 +83,18 @@ def _run_child(argv: list, cwd: Path, log_file: Path) -> int:
         return completed.returncode
 
 
+def _safe_print(message: str) -> None:
+    """print() raises ValueError on a closed stream (not just no-ops like it
+    does on a None stdout). A detached background job — exactly how Task 11
+    spawns this process — can hand the runner either. A failure to print a
+    diagnostic must never itself become an unhandled exception on a path
+    that still has real work left to do (recording status, firing a hook)."""
+    try:
+        print(message)
+    except (ValueError, OSError):
+        pass
+
+
 def _log_and_print(log_file: Path, message: str) -> None:
     """Print a diagnostic AND append it to the log file.
 
@@ -93,7 +105,7 @@ def _log_and_print(log_file: Path, message: str) -> None:
     there too, not only on a stream nobody is reading. Best-effort: a
     log-append failure here must not mask the outcome already recorded.
     """
-    print(message)
+    _safe_print(message)
     try:
         with open(log_file, "a", encoding="utf-8", errors="replace") as log:
             log.write(message + "\n")
@@ -123,14 +135,15 @@ def _record_outcome(
         new_status = FAILED_STATUS
         event = f"on_{role}_failed"
 
+    status_applied = False
     if new_status:
-        updated = update_frontmatter_status(
+        status_applied = update_frontmatter_status(
             target_file,
             new_status,
             state_machine["valid_statuses"],
             state_machine["transitions"],
         )
-        if not updated:
+        if not status_applied:
             _log_and_print(
                 log_file,
                 f"[runner] ERROR: could not set status to '{new_status}' for "
@@ -145,8 +158,11 @@ def _record_outcome(
             f"the slice's on-disk status was not updated.",
         )
 
+    # Only claim the transition happened if it actually did — the ERROR/
+    # WARNING above already explains why, when it didn't.
+    status_summary = f"status -> {new_status}" if status_applied else "status UNCHANGED"
     _log_and_print(
-        log_file, f"[runner] {role} exited {exit_code}; status -> {new_status}; log: {log_file}"
+        log_file, f"[runner] {role} exited {exit_code}; {status_summary}; log: {log_file}"
     )
 
     try:

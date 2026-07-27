@@ -142,7 +142,26 @@ def test_illegal_transition_does_not_silently_claim_success(tmp_project, demo_sp
         argv=[sys.executable, "-c", "print('done')"], cwd=tmp_project,
     )
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "VERIFIED_CLOSED"
-    assert "could not set status" in log_file.read_text(encoding="utf-8")
+    log_text = log_file.read_text(encoding="utf-8")
+    assert "could not set status" in log_text
+    assert "status -> PLAN_GENERATED" not in log_text
+    assert "status UNCHANGED" in log_text
+
+
+def test_failing_hook_does_not_overwrite_the_recorded_status(tmp_project, demo_spec):
+    """A completion hook that fails must not roll back or hide the status
+    the runner already wrote from the child's exit code."""
+    _set_status(demo_spec, "PLANNING")
+    script = tmp_project / "failing_hook.py"
+    script.write_text("raise SystemExit(1)\n", encoding="utf-8")
+    (tmp_project / ".superpowers" / "hooks.yaml").write_text(
+        f"hooks:\n  on_planner_complete:\n    command: {sys.executable} {script.name}\n",
+        encoding="utf-8",
+    )
+    code, _, log_file = _supervise(tmp_project, demo_spec, [sys.executable, "-c", "pass"])
+    assert code == 0
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_GENERATED"
+    assert "completion hook failed" in log_file.read_text(encoding="utf-8")
 
 
 def test_main_runs_the_agent_and_returns_its_exit_code(tmp_project, demo_spec):
