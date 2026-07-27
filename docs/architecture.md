@@ -80,6 +80,48 @@ The agent command is passed as an argument vector and spawned with
 `shell=False`. No shell parses a prompt, a path, or a configured argument at
 any point.
 
+### Dispatch ordering
+
+The order of steps in `cmd_dispatch_agent` is load-bearing, not incidental.
+Every step that can fail runs **before** the first irreversible mutation, so a
+failed precondition never leaves a slice that has to be repaired by hand:
+
+```
+1. resolve + validate config          5. create worktree            (may fail)
+2. dependency gate, state gate        6. resolve adapter + argv     (may fail)
+3. acquire lock                       7. set in_progress_status  <- first mutation
+4. fire on_slice_{role}_start (may fail)   8. spawn supervisor
+```
+
+Anything failing in steps 4–6 releases the lock and exits non-zero with the
+slice still at its entry status. Step 7 is also checked: if the transition is
+rejected, the lock is released and nothing is spawned.
+
+### Runtime artifacts
+
+All runtime state is derived from the project root, never from the current
+working directory — the executor runs with `cwd=<worktree>`, so a relative path
+would split a directory from the file written into it.
+
+```
+<project root>/.superpowers/logs/<role>_<stem>.log
+<project root>/.superpowers/locks/<slice_id>.lock
+<project root>/.worktrees/<slice_id>/
+```
+
+`git_ops.check_working_tree_clean` ignores exactly these prefixes, so the
+orchestrator's own output cannot block its own merge. The user's `.gitignore`
+is never written to; `dispatch-agent` prints a hint instead.
+
+### Lock ownership
+
+Acquisition and ownership are deliberately separate. The dispatcher creates the
+lock atomically (`O_CREAT | O_EXCL`) in state `starting` and exits; the
+supervisor it spawned rewrites the lock with its own PID and state `running`,
+and removes it in a `finally`. A `starting` lock is honoured for a bounded grace
+window so the gap between those two events is not a hole, and a `running` lock
+whose PID is dead is reclaimed.
+
 ## Configuration
 
 See [configuration.md](configuration.md) for the full `agents.yaml` schema.

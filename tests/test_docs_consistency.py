@@ -72,6 +72,42 @@ def test_requirements_declare_the_test_dependency():
     assert "pytest" in requirements
 
 
+def test_every_canonical_hook_event_is_documented():
+    """A hook event the orchestrator emits must be findable in the docs.
+
+    `hooks.yaml` is configuration, and an event that exists but is written
+    down nowhere is how the consuming project ended up keying a hook on
+    `on_slice_execution_start` — a name that never fired.
+    """
+    documented = CONFIGURATION + README
+    for event in sorted(canonical_events(DEFAULT_CONFIG["agents"])):
+        assert event in documented, (
+            f"hook event '{event}' is emitted by the orchestrator but appears "
+            f"in neither docs/configuration.md nor README.md"
+        )
+
+
+def test_failed_recovery_path_is_documented():
+    """FAILED is only useful if the reader knows how to leave it."""
+    transitions = DEFAULT_CONFIG["state_machine"]["transitions"]["FAILED"]
+    documented = README + CONFIGURATION + ARCHITECTURE
+    for target in transitions:
+        assert target in documented
+    assert "FAILED" in README
+
+
+def test_runtime_artifact_paths_are_documented():
+    """dispatch prints a .gitignore hint; the docs must explain what it means."""
+    from scripts.paths import ARTIFACT_PREFIXES
+
+    documented = README + ARCHITECTURE
+    for prefix in ARTIFACT_PREFIXES:
+        assert prefix.rstrip("/") in documented, (
+            f"runtime artifact path '{prefix}' is created by the orchestrator "
+            f"but never explained to the user"
+        )
+
+
 def test_no_shipped_text_advertises_a_harness_without_an_adapter():
     """A harness named in shipped text must be one the loader can resolve.
 

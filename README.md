@@ -54,6 +54,10 @@ flowchart TD
         A2["🧠 Agent 2: Opus 5 (Slice Architect & Auditor)"]
     end
 
+    subgraph SUP ["Orchestrator (Supervision Layer)"]
+        R["🛡 runner.py — captures the log, holds the lock,<br/>derives status from the exit code"]
+    end
+
     subgraph CLI ["Configurable CLI Harness (Execution Layer)"]
         A3["📝 Agent 3: Planner (default: Kimi K3)"]
         A4["💻 Agent 4: Executor (default: Minimax M3)"]
@@ -64,13 +68,23 @@ flowchart TD
     A2 -->|"Slice Spec"| Human
     Human -->|"SPEC_APPROVED"| A2
 
-    A2 -->|"dispatch-agent --role planner"| A3
-    A3 -->|"Plan Output"| A2
-    A2 -->|"PLAN_APPROVED"| A4
-    A4 -->|"EXECUTION_COMPLETE"| A2
+    A2 -->|"dispatch-agent --role planner"| R
+    A2 -->|"dispatch-agent --role executor"| R
+    R --> A3
+    R --> A4
+    A3 -->|"exit code"| R
+    A4 -->|"exit code"| R
+    R -->|"exit 0 ➔ PLAN_GENERATED / EXECUTION_COMPLETE"| A2
+    R -->|"exit ≠0 ➔ FAILED"| A2
     A2 -->|"Diff Audit"| Human
     Human -->|"VERIFIED_CLOSED"| Done["✅ Closed Slice"]
 ```
+
+> **The agent never sets its own terminal status.** `dispatch-agent` returns as
+> soon as the supervisor is spawned; the supervisor waits for the agent, writes
+> its transcript to `.superpowers/logs/`, and converts the exit code into a
+> status. An agent that crashes — or simply forgets to report — therefore
+> cannot leave a slice stranded.
 
 ---
 
@@ -94,21 +108,97 @@ The lifecycle of every feature slice is tracked transparently inside Markdown **
 
 ## 🔌 Generic Project Infrastructure Hooks
 
-Projects can optionally define `.superpowers/hooks.yaml` in their repository root to trigger environment isolation and cleanup automatically:
+Projects can optionally define `.superpowers/hooks.yaml` in their repository root to trigger environment isolation and cleanup automatically.
+
+**These names are the complete set the orchestrator emits.** A key that is not
+one of them never fires — so the orchestrator reports it as an unknown event at
+load time rather than leaving you to wonder why nothing happened. `{role}` is
+each role defined in `agents.yaml`; with the default roles that is `planner` and
+`executor`.
+
+| Event | Fired by | When |
+| :--- | :--- | :--- |
+| `on_slice_{role}_start` | `dispatch-agent` | before the supervisor is spawned — fails the dispatch without touching the slice |
+| `on_{role}_complete` | supervisor | the agent exited `0` |
+| `on_{role}_failed` | supervisor | the agent exited non-zero |
+| `on_slice_verified_closed` | `set-status` | after a successful merge |
+
+`capture_env: true` parses the hook's stdout for `KEY=VALUE` (and `export KEY=VALUE`) lines and passes them into the agent's environment.
 
 ```yaml
 # Example: .superpowers/hooks.yaml
 hooks:
+  on_slice_planner_start:
+    command: "echo Preparing planning environment"
+
   on_slice_executor_start:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py up"
     capture_env: true
+
+  on_planner_complete:
+    command: "echo Plan generated"
+
+  on_planner_failed:
+    command: "echo Planning failed — see .superpowers/logs/"
+
   on_executor_complete:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
+
   on_executor_failed:
     command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
+
   on_slice_verified_closed:
     command: "echo Slice verification complete"
 ```
+
+---
+
+## 🗂 Runtime Artifacts
+
+The orchestrator writes into the project it operates on. Everything it creates
+lives under two directories, so one ignore rule covers it:
+
+| Path | Contents |
+| :--- | :--- |
+| `.superpowers/logs/` | One transcript per dispatch: `<role>_<file stem>.log` |
+| `.superpowers/locks/` | One lock per in-flight slice, naming the live supervisor PID |
+| `.worktrees/` | Isolated worktrees for agents with `isolated_worktree: true` |
+
+Add them to your `.gitignore` — `dispatch-agent` prints a reminder when they are
+neither ignored nor tracked:
+
+```gitignore
+.superpowers/logs/
+.superpowers/locks/
+.worktrees/
+```
+
+Your `.gitignore` is never modified for you. The merge gate ignores these three
+paths when deciding whether the tree is clean, so the orchestrator's own output
+cannot block its own `VERIFIED_CLOSED` merge — but leaving them untracked will
+otherwise clutter every diff you take.
+
+---
+
+## 🚑 When a Slice Fails
+
+A non-zero exit from the agent puts the slice in `FAILED` and releases the lock.
+Nothing is stranded and nothing needs hand-editing.
+
+1. Read the transcript: `... summary --slice <slice-id> --dir .`
+2. Fix the cause — a broken plan, a missing dependency, a failing environment hook.
+3. Return the slice to the gate it came from and dispatch again:
+
+```bash
+# planning failed -> back to the spec gate
+python -m scripts.orchestrator set-status --file docs/superpowers/specs/<spec>.md --status SPEC_APPROVED
+
+# execution failed -> back to the plan gate
+python -m scripts.orchestrator set-status --file docs/superpowers/plans/<plan>.md --status PLAN_APPROVED
+```
+
+`FAILED` accepts exactly these two transitions, because they are the entry
+points of the planner and executor roles.
 
 ---
 

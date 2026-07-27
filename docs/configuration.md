@@ -87,9 +87,32 @@ agents:
 
 ## Adding Custom Agents
 
-Add any role to the `agents` section:
+Add any role to the `agents` section. Declare `success_status` alongside
+`in_progress_status`: it is the status the supervisor sets when the agent exits
+`0`. Without it the agent runs, but its outcome is never recorded — the
+supervisor logs a warning and the slice keeps its in-progress status.
 
 ```yaml
+state_machine:
+  valid_statuses:
+    - DRAFT_SPEC
+    - SPEC_APPROVED
+    - PLANNING
+    - PLAN_GENERATED
+    - PLAN_APPROVED
+    - EXECUTING
+    - EXECUTION_COMPLETE
+    - REVIEWING          # new
+    - REVIEW_PASSED      # new
+    - FAILED
+    - MERGE_CONFLICT
+    - VERIFIED_CLOSED
+  transitions:
+    EXECUTION_COMPLETE: ["REVIEWING", "VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"]
+    REVIEWING: ["REVIEW_PASSED", "FAILED"]
+    REVIEW_PASSED: ["VERIFIED_CLOSED", "EXECUTING"]
+    FAILED: ["SPEC_APPROVED", "PLAN_APPROVED", "EXECUTION_COMPLETE"]
+
 agents:
   reviewer:
     model: claude-opus-4
@@ -98,8 +121,61 @@ agents:
     allowed_statuses:
       - EXECUTION_COMPLETE
     in_progress_status: REVIEWING
+    success_status: REVIEW_PASSED
     isolated_worktree: false
     prompt_template: 'Review the code changes for {file} and provide feedback.'
 ```
 
-Remember to add `REVIEWING` to `state_machine.valid_statuses` and update `transitions` accordingly.
+Every status a role names must appear in `valid_statuses`, and both
+`in_progress_status` and `success_status` must be reachable by a declared
+transition — otherwise the config is rejected at load time. Give `FAILED` a
+transition back to your new role's entry gate, or a failed run of that role has
+nowhere to return to.
+
+Adding a role also extends the hook event set below: a `reviewer` role makes
+`on_slice_reviewer_start`, `on_reviewer_complete` and `on_reviewer_failed` valid
+keys in `hooks.yaml`.
+
+## Infrastructure Hooks (`.superpowers/hooks.yaml`)
+
+Optional. Lets a project prepare and tear down its own environment around a
+dispatch — container stacks, per-branch network isolation, cache warming.
+
+| Event | Fired by | When |
+|-------|----------|------|
+| `on_slice_{role}_start` | `dispatch-agent` | before the supervisor is spawned |
+| `on_{role}_complete` | supervisor | the agent exited `0` |
+| `on_{role}_failed` | supervisor | the agent exited non-zero |
+| `on_slice_verified_closed` | `set-status` | after a successful merge |
+
+With the default roles the full set is `on_slice_planner_start`,
+`on_planner_complete`, `on_planner_failed`, `on_slice_executor_start`,
+`on_executor_complete`, `on_executor_failed` and `on_slice_verified_closed`.
+
+**A key outside this set never fires.** The orchestrator reports it as an
+unknown event when it loads `hooks.yaml`, listing the valid names — silence
+there once hid a project's environment hook that had never run.
+
+| Hook property | Type | Description |
+|---------------|------|-------------|
+| `command` | string | Shell command, run with the project root as its working directory |
+| `capture_env` | bool | Parse stdout for `KEY=VALUE` / `export KEY=VALUE` and pass them into the agent's environment |
+
+```yaml
+# .superpowers/hooks.yaml
+hooks:
+  on_slice_executor_start:
+    command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py up"
+    capture_env: true
+
+  on_executor_failed:
+    command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
+
+  on_slice_verified_closed:
+    command: "python .claude/skills/sandbox-loopback/scripts/sandbox_loopback.py teardown --yes"
+```
+
+A failing `on_slice_{role}_start` aborts the dispatch **before** the slice's
+status is touched and releases the lock, so the slice stays at its entry gate.
+A failing completion hook is reported but does not overwrite the outcome the
+supervisor already recorded.
