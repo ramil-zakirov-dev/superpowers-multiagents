@@ -171,10 +171,11 @@ neither ignored nor tracked:
 ```gitignore
 .superpowers/logs/
 .superpowers/locks/
+.superpowers/sandbox/
 .worktrees/
 ```
 
-Your `.gitignore` is never modified for you. The merge gate ignores these three
+Your `.gitignore` is never modified for you. The merge gate ignores these four
 paths when deciding whether the tree is clean, so the orchestrator's own output
 cannot block its own `VERIFIED_CLOSED` merge — but leaving them untracked will
 otherwise clutter every diff you take.
