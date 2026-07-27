@@ -160,7 +160,7 @@ TEARDOWN_MODES = frozenset({"volumes", "containers", "none"})
 #: The only substitutions a `sandbox.env` template may contain.
 KNOWN_TOKENS = frozenset({"ip", "project"})
 
-_TOKEN_PATTERN = re.compile(r"\{([^{}]*)\}")
+_TOKEN_PATTERN = re.compile(r"(?<!\$)\{([^{}]*)\}")
 
 
 def validate_config(config: dict) -> None:

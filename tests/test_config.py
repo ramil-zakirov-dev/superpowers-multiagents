@@ -175,3 +175,15 @@ def test_unknown_teardown_key_fails_closed():
     config["sandbox"]["teardown"]["on_whatever"] = "none"
     with pytest.raises(ConfigError, match="on_whatever"):
         validate_config(config)
+
+
+def test_dollar_brace_env_placeholder_is_not_treated_as_a_template_token():
+    """${VAR} process-env placeholders must not be mistaken for template tokens.
+
+    sandbox.env templates may combine ${ENV_VAR} (for os.path.expandvars) with
+    {ip}/{project} tokens (for our substitution) in the same string.
+    """
+    config = _with_sandbox(
+        enabled=True, env={"dsn": "postgres://u:${SANDBOX_TEST_PASSWORD}@{ip}/db"}
+    )
+    validate_config(config)  # must not raise ConfigError
