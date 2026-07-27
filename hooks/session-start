@@ -4,6 +4,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Path in the form the *native* interpreter understands, for injection.
+#
+# Under Git Bash `pwd` returns an MSYS path (/c/Users/...), which a native
+# Windows Python resolves against the current drive as C:\c\Users\... -- a
+# path that does not exist. The injected path is an instruction the model may
+# hand to PowerShell or subprocess just as easily as to bash, so it has to be
+# native. `pwd -W` yields that form on MSYS; on macOS and Linux the flag does
+# not exist, and plain `pwd` is already native.
+native_path_of() {
+    ( cd "$1" && { pwd -W 2>/dev/null || pwd; } )
+}
+PLUGIN_ROOT_NATIVE="$(native_path_of "${SCRIPT_DIR}/..")"
+
 orchestrator_skill=$(cat "${PLUGIN_ROOT}/skills/multiagent-orchestrator/SKILL.md" 2>&1 || echo "Error reading multiagent-orchestrator skill")
 
 escape_for_json() {
@@ -17,7 +30,7 @@ escape_for_json() {
 }
 
 escaped_content=$(escape_for_json "$orchestrator_skill")
-orchestrator_path="${PLUGIN_ROOT}/scripts/orchestrator.py"
+orchestrator_path="${PLUGIN_ROOT_NATIVE}/scripts/orchestrator.py"
 session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers multi-agent orchestration enabled.\n\nOrchestrator absolute path: ${orchestrator_path}\nUse it wherever the skill below writes <orchestrator>.\n\n**Below is the full content of your 'superpowers-multiagents:multiagent-orchestrator' skill:**\n\n${escaped_content}\n</EXTREMELY_IMPORTANT>"
 
 if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then

@@ -58,6 +58,44 @@ def test_session_start_emits_the_orchestrator_skill():
     assert "multiagent-orchestrator" in context
 
 
+def _injected_context(payload: dict) -> str:
+    """Pull the injected text out of whichever envelope the platform branch used."""
+    if "additionalContext" in payload:
+        return payload["additionalContext"]
+    if "additional_context" in payload:
+        return payload["additional_context"]
+    return payload["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.skipif(BASH is None, reason="a real (non-WSL-stub) bash is not available")
+def test_injected_orchestrator_path_is_usable_by_the_interpreter():
+    """The injected path must open for the interpreter that will run it.
+
+    The hook derives it from `pwd` inside bash. Under Git Bash that yields an
+    MSYS path (`/c/Users/...`), which a native Windows Python resolves against
+    the current drive as `C:\\c\\Users\\...` — a path that does not exist. The
+    model may run the command through PowerShell or `subprocess` just as
+    easily as through bash, so an MSYS-only path is a broken instruction.
+    """
+    result = subprocess.run(
+        [BASH, str(REPO_ROOT / "hooks" / "session-start")],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+    )
+    context = _injected_context(json.loads(result.stdout))
+
+    prefix = "Orchestrator absolute path:"
+    line = next(
+        (ln for ln in context.splitlines() if ln.startswith(prefix)), None
+    )
+    assert line is not None, "the hook injected no orchestrator path"
+
+    injected = line[len(prefix):].strip()
+    assert Path(injected).is_file(), (
+        f"injected orchestrator path is not openable by this interpreter: {injected!r}"
+    )
+    assert Path(injected).resolve() == (REPO_ROOT / "scripts" / "orchestrator.py").resolve()
+
+
 def test_hooks_json_has_no_shell_key():
     """Upstream does not set it and it buys nothing here."""
     config = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
