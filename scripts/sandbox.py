@@ -12,6 +12,7 @@ first of those is standing anywhere near the slice's own worktree -- a
 module that guessed would guess wrong in two of the three.
 """
 
+import contextlib
 import dataclasses
 import errno
 import hashlib
@@ -25,7 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from scripts.errors import SandboxError
+from scripts.errors import LockError, SandboxError
+from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import sandbox_dir, sandbox_state_path
 
 #: Errnos meaning "the platform has not configured this address", as opposed
@@ -229,6 +231,37 @@ def _busy_ips(project_root: Path) -> set:
     return {record.ip for record in list_states(project_root)}
 
 
+#: Fixed id for the cross-slice allocation lock. `_sanitize_id` accepts it.
+_ALLOC_LOCK_ID = "sandbox-alloc"
+
+
+@contextlib.contextmanager
+def _allocation_lock(project_root, attempts: int = 20, delay: float = 0.1):
+    """Serialise 'choose an address and record it' across concurrent dispatches.
+
+    The critical section is milliseconds long, so contention is retried
+    briefly rather than treated as fatal -- a spurious dispatch failure would
+    be a worse outcome than a short wait.
+    """
+    lock_file = None
+    for attempt in range(attempts):
+        try:
+            lock_file = acquire_slice_lock(_ALLOC_LOCK_ID, Path(project_root))
+            break
+        except LockError:
+            if attempt == attempts - 1:
+                raise SandboxError(
+                    f"Could not take the sandbox allocation lock after "
+                    f"{attempts} attempts. Another dispatch may be wedged; "
+                    f"check .superpowers/locks/{_ALLOC_LOCK_ID}.lock"
+                )
+            time.sleep(delay)
+    try:
+        yield lock_file
+    finally:
+        release_slice_lock_file(lock_file)
+
+
 def _await_health(project_root: Path, sandbox_cfg: dict, state: SandboxState,
                   env: dict) -> None:
     service = sandbox_cfg.get("health_service")
@@ -284,15 +317,16 @@ def ensure_up(branch: str, project_root, config: dict) -> dict:
             f"A project that asks for a sandbox must ship a compose file."
         )
 
-    state = read_state(project_root, branch)
-    if state is None:
-        state = SandboxState(
-            branch=branch,
-            ip=ip_for(branch, busy=_busy_ips(project_root)),
-            project_name=project_name_for(branch),
-            started_at=datetime.now(timezone.utc).isoformat(),
-        )
-        write_state(project_root, state)
+    with _allocation_lock(project_root):
+        state = read_state(project_root, branch)
+        if state is None:
+            state = SandboxState(
+                branch=branch,
+                ip=ip_for(branch, busy=_busy_ips(project_root)),
+                project_name=project_name_for(branch),
+                started_at=datetime.now(timezone.utc).isoformat(),
+            )
+            write_state(project_root, state)
 
     env = render_env(sandbox_cfg, state.ip, state.project_name)
     _compose(project_root, sandbox_cfg, state, ["up", "-d"], env)

@@ -299,3 +299,27 @@ def test_teardown_none_touches_nothing(tmp_path, stub_docker):
 
     assert len(stub_docker.calls) == before
     assert sandbox.read_state(tmp_path, "feat/alpha") is not None
+
+
+def test_allocation_is_serialised(tmp_path, monkeypatch):
+    """A second allocator must not run while the first holds the lock."""
+    from scripts.locks import acquire_slice_lock
+
+    held = acquire_slice_lock(sandbox._ALLOC_LOCK_ID, tmp_path)
+    try:
+        with pytest.raises(OrchestratorError, match="allocation lock"):
+            with sandbox._allocation_lock(tmp_path, attempts=2, delay=0.01):
+                pass
+    finally:
+        held.unlink(missing_ok=True)
+
+
+def test_allocation_lock_is_released_on_the_error_path(tmp_path):
+    from scripts.locks import acquire_slice_lock
+
+    with pytest.raises(RuntimeError):
+        with sandbox._allocation_lock(tmp_path):
+            raise RuntimeError("boom")
+
+    # If the lock leaked, this second acquisition would raise LockError.
+    acquire_slice_lock(sandbox._ALLOC_LOCK_ID, tmp_path).unlink(missing_ok=True)
