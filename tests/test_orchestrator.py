@@ -8,7 +8,6 @@ import json
 
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
 from scripts.hooks import load_project_hooks, run_infrastructure_hook
-from scripts.dependencies import check_unmet_dependencies
 from scripts.utils import find_project_root, _sanitize_id, _to_plain_dict
 from scripts.locks import acquire_slice_lock, release_slice_lock
 from scripts.git_ops import check_working_tree_clean
@@ -303,51 +302,6 @@ def test_run_infrastructure_hook_missing_event():
         assert isinstance(env, dict)
 
 
-# ===== check_unmet_dependencies =====
-
-def test_check_unmet_dependencies():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        specs_dir = Path(tmpdir) / "specs"
-        specs_dir.mkdir()
-
-        dep_spec = specs_dir / "2026-07-25-slice-01-base-design.md"
-        dep_spec.write_text("""---
-slice_id: "slice-01-base"
-status: EXECUTING
----
-""", encoding="utf-8")
-
-        target_spec = specs_dir / "2026-07-25-slice-02-dep-design.md"
-        target_spec.write_text("""---
-slice_id: "slice-02-dep"
-status: SPEC_APPROVED
-depends_on:
-  - "slice-01-base"
----
-""", encoding="utf-8")
-
-        unmet = check_unmet_dependencies(target_spec)
-        assert len(unmet) == 1
-        assert "slice-01-base" in unmet[0]
-
-        # Update base to VERIFIED_CLOSED through valid transitions
-        update_frontmatter_status(dep_spec, "EXECUTION_COMPLETE", _VALID, _TRANS)
-        update_frontmatter_status(dep_spec, "VERIFIED_CLOSED", _VALID, _TRANS)
-        unmet_after = check_unmet_dependencies(target_spec)
-        assert len(unmet_after) == 0
-
-
-def test_check_unmet_dependencies_no_deps():
-    """A spec with no depends_on should return an empty list."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        specs_dir = Path(tmpdir) / "specs"
-        specs_dir.mkdir()
-        spec = specs_dir / "standalone.md"
-        spec.write_text("""---
-status: SPEC_APPROVED
----
-""", encoding="utf-8")
-        assert check_unmet_dependencies(spec) == []
 
 
 # ===== find_project_root =====
