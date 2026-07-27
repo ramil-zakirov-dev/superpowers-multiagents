@@ -189,10 +189,10 @@ hooks:
 ```
 
 **This particular use of a hook — per-slice infrastructure isolation — is superseded.**
-`on_slice_executor_start` fires before the dispatched slice's branch/worktree
-exists, so a branch-derived address or compose project name resolves to the
-same value for every slice in flight, and parallel slices silently share one
-stack and corrupt each other's data. Use the
+Prior to 2.1.0, `on_slice_executor_start` fired before the dispatched slice's
+branch/worktree existed, so a branch-derived address or compose project name
+resolved to the same value for every slice in flight, and parallel slices
+silently shared one stack and corrupted each other's data. Use the
 [Sandbox (per-slice infrastructure)](#sandbox-per-slice-infrastructure) section
 below for this need; hooks remain the right tool for everything else (cache
 warming, notifications, non-sandbox environment prep).

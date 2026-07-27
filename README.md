@@ -70,7 +70,7 @@ flowchart TD
     A2 -->|"Slice Spec"| Human
     Human -->|"SPEC_APPROVED"| A2
 
-    A2 -->|"dispatch-agent --role planner"| W
+    A2 -->|"dispatch-agent --role planner"| R
     A2 -->|"dispatch-agent --role executor"| W
     W --> SB
     SB --> R
@@ -159,10 +159,10 @@ hooks:
 ```
 
 **Per-slice infrastructure isolation via this hook is superseded.**
-`on_slice_executor_start` fires before the dispatched slice's branch/worktree
-exists, so a branch-derived address resolves the same for every slice in
-flight and parallel slices silently share one stack. Use the sandbox feature
-below instead — see
+Prior to 2.1.0, `on_slice_executor_start` fired before the dispatched slice's
+branch/worktree existed, so a branch-derived address resolved the same for
+every slice in flight and parallel slices silently shared one stack. Use the
+sandbox feature below instead — see
 [docs/configuration.md](docs/configuration.md#sandbox-per-slice-infrastructure).
 
 ---

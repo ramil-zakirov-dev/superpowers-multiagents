@@ -106,7 +106,7 @@ variable — from its environment. This is a behavioural change to a published
 contract: a `hooks.yaml` written against 2.0.0's ordering still runs, but a
 hook that assumed "no worktree yet" no longer holds.
 
-Anything failing in steps 6–8 releases the lock and exits non-zero with the
+Anything failing in steps 4–7 releases the lock and exits non-zero with the
 slice still at its entry status. Step 8 is also checked: if the transition is
 rejected, the lock is released and nothing is spawned.
 
