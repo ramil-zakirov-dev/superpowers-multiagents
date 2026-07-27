@@ -156,3 +156,45 @@ def test_every_builtin_harness_is_documented():
         assert name in CONFIGURATION.lower() or name in SKILL.lower(), (
             f"built-in harness '{name}' is not mentioned in any user-facing doc"
         )
+
+
+def test_every_sandbox_config_key_is_documented():
+    from scripts.config import KNOWN_SANDBOX_KEYS
+
+    for key in sorted(KNOWN_SANDBOX_KEYS):
+        assert key in CONFIGURATION, (
+            f"sandbox config key '{key}' is accepted by the loader but appears "
+            f"nowhere in docs/configuration.md"
+        )
+
+
+def test_every_teardown_mode_is_documented():
+    from scripts.config import TEARDOWN_MODES
+
+    for mode in sorted(TEARDOWN_MODES):
+        assert mode in CONFIGURATION, (
+            f"teardown mode '{mode}' is valid but undocumented"
+        )
+
+
+def test_sandbox_is_documented_as_opt_in():
+    """The plugin has no docker dependency unless a project asks for one."""
+    assert "opt-in" in CONFIGURATION.lower() or "opt in" in CONFIGURATION.lower()
+
+
+def test_documented_sandbox_example_survives_the_real_validator():
+    """A doc example that does not load is worse than no example."""
+    import re as _re
+
+    from ruamel.yaml import YAML
+
+    from scripts.config import DEFAULT_CONFIG, deep_merge, validate_config
+    from scripts.utils import _to_plain_dict
+
+    blocks = _re.findall(r"```yaml\n(.*?)```", CONFIGURATION, _re.DOTALL)
+    sandbox_blocks = [b for b in blocks if b.lstrip().startswith("sandbox:")]
+    assert sandbox_blocks, "docs/configuration.md has no sandbox YAML example"
+
+    for block in sandbox_blocks:
+        parsed = _to_plain_dict(YAML(typ="rt").load(block))
+        validate_config(deep_merge(DEFAULT_CONFIG, parsed))

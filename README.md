@@ -153,6 +153,27 @@ hooks:
 
 ---
 
+## 🐳 Parallel slices need isolated infrastructure
+
+Optional and **opt-in**: with no `sandbox` block in `.superpowers/agents.yaml`
+the orchestrator never makes a docker call. Declare one and each isolated
+slice gets its own `docker compose` stack, published on its own
+`127.0.0.x` loopback address, so two agents dispatched in parallel from
+different worktrees never fight over the same host port. See
+[docs/configuration.md](docs/configuration.md#sandbox-per-slice-infrastructure)
+for the full schema, the template tokens, and the three teardown modes.
+
+```bash
+python -m scripts.orchestrator sandbox status --dir .
+```
+
+```
+feat/slice-02-native-sandbox                    127.0.0.78   running
+feat/slice-03-other-feature                     127.0.0.140  stopped
+```
+
+---
+
 ## 🗂 Runtime Artifacts
 
 The orchestrator writes into the project it operates on. Everything it creates

@@ -179,3 +179,109 @@ A failing `on_slice_{role}_start` aborts the dispatch **before** the slice's
 status is touched and releases the lock, so the slice stays at its entry gate.
 A failing completion hook is reported but does not overwrite the outcome the
 supervisor already recorded.
+
+## Sandbox (per-slice infrastructure)
+
+Optional, and **opt-in**: with no `sandbox` block in `.superpowers/agents.yaml`
+— or with `sandbox.enabled` left at its default of `false` — the orchestrator
+makes **no docker call at all**. Nothing about dispatch, teardown, or status
+touches a container runtime unless a project's config asks for one explicitly.
+
+When enabled, each slice's compose stack is published on its own
+`127.0.0.x` loopback address and its own compose project, so parallel
+worktrees never contend for a host port. Container-to-container traffic is
+unaffected — only host-side publishing is rebound.
+
+### Full schema
+
+```yaml
+sandbox:
+  enabled: true                      # opt in; false (the default) means no docker call is ever made
+  compose_file: docker-compose.yml   # path to the compose file, relative to the project root
+  health_service: postgres           # optional; a compose service to await via `docker compose ps`
+  health_timeout: 60                 # seconds to wait for health_service to report healthy
+  env:
+    pg_dsn: "postgresql://user:pass@{ip}:5432/db"
+    qdrant_url: "http://{ip}:6333"
+  teardown:
+    on_verified_closed: volumes      # volumes | containers | none
+    on_failed: containers
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `enabled` | bool | Opt-in switch. `false` (the default) means the orchestrator never invokes docker. |
+| `compose_file` | string | Path to the `docker compose` file, relative to the project root. |
+| `health_service` | string or null | A compose service name to poll with `docker compose ps` before the dispatched agent is allowed to proceed. Omit (`null`) to skip the wait. |
+| `health_timeout` | int | Seconds to wait for `health_service` to report `healthy` before dispatch fails with `SandboxError`. |
+| `env` | mapping | Extra environment variables passed to the dispatched agent. Values may reference the two template tokens below and `${VAR}` from the parent process environment. |
+| `teardown.on_verified_closed` | string | Teardown mode run when a slice's status becomes `VERIFIED_CLOSED`. |
+| `teardown.on_failed` | string | Teardown mode run when the dispatched agent exits non-zero. |
+
+### Template tokens
+
+`sandbox.env` values may contain exactly two substitutions:
+
+| Token | Expands to |
+|-------|------------|
+| `{ip}` | The loopback address allocated to this slice's branch (e.g. `127.0.0.78`). |
+| `{project}` | The compose project name derived from the branch. |
+
+Any other `{...}` token — including a typo like `{IP}` — is rejected with
+`ConfigError` at load time, before any agent is dispatched. `${VAR}` expands
+first, from the parent process environment, so a real credential can be
+sourced from `.env` rather than committed to a tracked config file.
+
+**`LOOPBACK_IP` and `COMPOSE_PROJECT_NAME` are injected unconditionally and are
+not declarable.** They are the contract every compose file and hook can rely
+on, not a setting a project chooses — they are not keys you write under
+`sandbox.env`, and the two tokens above are how you reference their values
+inside your own `env` templates.
+
+### Teardown modes
+
+`TEARDOWN_MODES` is the enum both `teardown.on_verified_closed` and
+`teardown.on_failed` must be one of:
+
+| Mode | Destroys |
+|------|----------|
+| `volumes` | `docker compose down -v` — stops and removes containers, networks, **and volumes**, and releases the loopback address (the sandbox state record is deleted). |
+| `containers` | `docker compose down` (no `-v`) — stops and removes containers, but keeps volumes and the state record, so a re-`up` returns the same address and the same data. |
+| `none` | Nothing. The stack is left running untouched. |
+
+The one state invariant: **the state record is deleted if and only if the
+volumes are destroyed.** `containers` mode — the default for `on_failed` —
+keeps a failure diagnosable; `volumes` mode — the default for
+`on_verified_closed` — releases the address a closed slice no longer needs.
+
+### `isolated_worktree` decides who gets a sandbox
+
+There is no separate on/off switch per agent. Whether a dispatch brings a
+stack up, attaches to an existing one, or touches nothing at all follows
+directly from the agent's `isolated_worktree` setting:
+
+| `isolated_worktree` | On dispatch |
+|---|---|
+| `true` | `sandbox.ensure_up(...)` — allocates an address if needed, brings the stack up, injects the environment. This agent owns the stack's lifecycle. |
+| `false` | `sandbox.resolve_env(...)` — injects the environment **only if** a stack already exists for the current branch; never brings one up. |
+
+A non-isolated agent runs on the human's own branch, so it attaches to
+whatever stack is already there instead of starting a competing one.
+
+### Fail closed on a missing address: `${LOOPBACK_IP:?}`
+
+The project's own `docker-compose.yml` must publish ports through
+`${LOOPBACK_IP:?}`, not a hardcoded `127.0.0.1` or a bare `${LOOPBACK_IP}`:
+
+```yaml
+services:
+  postgres:
+    ports:
+      - "${LOOPBACK_IP:?}:5432:5432"
+```
+
+The `:?` suffix makes `docker compose` refuse to start if `LOOPBACK_IP` is
+unset, rather than silently publishing on every interface or colliding with
+another slice's stack on `127.0.0.1`. This is the compose file's half of the
+contract — the orchestrator's half is injecting `LOOPBACK_IP` before every
+`ensure_up`.
