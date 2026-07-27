@@ -16,6 +16,7 @@ import dataclasses
 import errno
 import hashlib
 import json
+import os
 import re
 import socket
 from pathlib import Path
@@ -161,3 +162,19 @@ def list_states(project_root) -> list:
         except (json.JSONDecodeError, OSError, TypeError, ValueError):
             continue
     return found
+
+
+def render_env(sandbox_cfg: dict, ip: str, project: str) -> dict:
+    """Build the environment a sandboxed agent runs with.
+
+    LOOPBACK_IP and COMPOSE_PROJECT_NAME are injected unconditionally and are
+    not declarable in config -- they are the contract, not a setting. Process
+    environment expansion runs first so a project can keep a real credential
+    in .env rather than in a tracked config file; token substitution runs
+    after, so an expanded value containing braces is never re-interpreted.
+    """
+    rendered = {"LOOPBACK_IP": ip, "COMPOSE_PROJECT_NAME": project}
+    for name, template in (sandbox_cfg.get("env") or {}).items():
+        expanded = os.path.expandvars(str(template))
+        rendered[name] = expanded.replace("{ip}", ip).replace("{project}", project)
+    return rendered

@@ -8,6 +8,7 @@ provider, Kimi K3 planner, Minimax M3 executor.
 
 import copy
 import logging
+import re
 from pathlib import Path
 
 from ruamel.yaml import YAML
@@ -64,7 +65,18 @@ DEFAULT_CONFIG = {
             "prompt_template": "Execute implementation plan at {file} using TDD subagent execution. Check off tasks in plan as completed.",
             "extra_args": []
         }
-    }
+    },
+    "sandbox": {
+        "enabled": False,
+        "compose_file": "docker-compose.yml",
+        "health_service": None,
+        "health_timeout": 60,
+        "env": {},
+        "teardown": {
+            "on_verified_closed": "volumes",
+            "on_failed": "containers",
+        },
+    },
 }
 
 
@@ -134,6 +146,23 @@ KNOWN_AGENT_KEYS = frozenset({
 })
 
 
+KNOWN_SANDBOX_KEYS = frozenset({
+    "enabled", "compose_file", "health_service", "health_timeout",
+    "env", "teardown",
+})
+
+KNOWN_TEARDOWN_KEYS = frozenset({"on_verified_closed", "on_failed"})
+
+#: `volumes` destroys data and releases the address; `containers` stops the
+#: stack but keeps both, so a failure stays diagnosable; `none` leaves it up.
+TEARDOWN_MODES = frozenset({"volumes", "containers", "none"})
+
+#: The only substitutions a `sandbox.env` template may contain.
+KNOWN_TOKENS = frozenset({"ip", "project"})
+
+_TOKEN_PATTERN = re.compile(r"\{([^{}]*)\}")
+
+
 def validate_config(config: dict) -> None:
     """Fail closed on a configuration that cannot work.
 
@@ -176,4 +205,34 @@ def validate_config(config: dict) -> None:
             if status not in known:
                 raise ConfigError(
                     f"agent '{role}'.allowed_statuses contains unknown status '{status}'."
+                )
+
+    sandbox = config.get("sandbox") or {}
+    unknown_keys = set(sandbox) - KNOWN_SANDBOX_KEYS
+    if unknown_keys:
+        raise ConfigError(
+            f"sandbox: unknown key(s) {sorted(unknown_keys)}. "
+            f"Known keys: {sorted(KNOWN_SANDBOX_KEYS)}"
+        )
+
+    teardown = sandbox.get("teardown") or {}
+    unknown_teardown = set(teardown) - KNOWN_TEARDOWN_KEYS
+    if unknown_teardown:
+        raise ConfigError(
+            f"sandbox.teardown: unknown key(s) {sorted(unknown_teardown)}. "
+            f"Known keys: {sorted(KNOWN_TEARDOWN_KEYS)}"
+        )
+    for key, mode in teardown.items():
+        if mode not in TEARDOWN_MODES:
+            raise ConfigError(
+                f"sandbox.teardown.{key} = '{mode}' is not a teardown mode. "
+                f"Valid modes: {sorted(TEARDOWN_MODES)}"
+            )
+
+    for name, template in (sandbox.get("env") or {}).items():
+        for token in _TOKEN_PATTERN.findall(str(template)):
+            if token not in KNOWN_TOKENS:
+                raise ConfigError(
+                    f"sandbox.env.{name}: unknown template token '{{{token}}}'. "
+                    f"Known tokens: {sorted('{' + t + '}' for t in KNOWN_TOKENS)}"
                 )

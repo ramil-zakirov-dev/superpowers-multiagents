@@ -110,3 +110,26 @@ def test_list_states_ignores_unparsable_files(tmp_path):
     (sandbox_state_dir := sandbox.sandbox_dir(tmp_path)).mkdir(exist_ok=True)
     (sandbox_state_dir / "garbage.json").write_text("{not json", encoding="utf-8")
     assert sandbox.list_states(tmp_path) == [record]
+
+
+def test_render_env_injects_the_contract_variables():
+    rendered = sandbox.render_env({"env": {}}, "127.0.0.7", "feat-a")
+    assert rendered["LOOPBACK_IP"] == "127.0.0.7"
+    assert rendered["COMPOSE_PROJECT_NAME"] == "feat-a"
+
+
+def test_render_env_substitutes_both_tokens():
+    rendered = sandbox.render_env(
+        {"env": {"dsn": "postgres://{ip}:5432/{project}"}}, "127.0.0.7", "feat-a"
+    )
+    assert rendered["dsn"] == "postgres://127.0.0.7:5432/feat-a"
+
+
+def test_render_env_expands_process_environment(monkeypatch):
+    """A project with a real secret sources it from the environment."""
+    monkeypatch.setenv("SANDBOX_TEST_PASSWORD", "s3cret")
+    rendered = sandbox.render_env(
+        {"env": {"dsn": "postgres://u:${SANDBOX_TEST_PASSWORD}@{ip}/db"}},
+        "127.0.0.7", "feat-a",
+    )
+    assert rendered["dsn"] == "postgres://u:s3cret@127.0.0.7/db"

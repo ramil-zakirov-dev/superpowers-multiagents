@@ -129,3 +129,49 @@ def test_validate_rejects_empty_valid_statuses():
 def test_known_agent_keys_cover_the_documented_schema():
     assert "success_status" in KNOWN_AGENT_KEYS
     assert "harness_adapter" in KNOWN_AGENT_KEYS
+
+
+def _with_sandbox(**overrides):
+    import copy
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["sandbox"].update(overrides)
+    return config
+
+
+def test_sandbox_is_disabled_by_default():
+    assert DEFAULT_CONFIG["sandbox"]["enabled"] is False
+    assert DEFAULT_CONFIG["sandbox"]["env"] == {}
+
+
+def test_unknown_sandbox_key_fails_closed():
+    config = _with_sandbox(enabled=True)
+    config["sandbox"]["compose_fiel"] = "typo.yml"
+    with pytest.raises(ConfigError, match="compose_fiel"):
+        validate_config(config)
+
+
+def test_unknown_template_token_fails_closed():
+    config = _with_sandbox(enabled=True, env={"dsn": "postgres://{IP}:5432/db"})
+    with pytest.raises(ConfigError, match=r"\{IP\}"):
+        validate_config(config)
+
+
+def test_known_template_tokens_are_accepted():
+    config = _with_sandbox(
+        enabled=True, env={"dsn": "postgres://{ip}:5432/{project}"}
+    )
+    validate_config(config)  # must not raise
+
+
+def test_teardown_mode_outside_the_enum_fails_closed():
+    config = _with_sandbox(enabled=True)
+    config["sandbox"]["teardown"]["on_failed"] = "nuke"
+    with pytest.raises(ConfigError, match="nuke"):
+        validate_config(config)
+
+
+def test_unknown_teardown_key_fails_closed():
+    config = _with_sandbox(enabled=True)
+    config["sandbox"]["teardown"]["on_whatever"] = "none"
+    with pytest.raises(ConfigError, match="on_whatever"):
+        validate_config(config)
