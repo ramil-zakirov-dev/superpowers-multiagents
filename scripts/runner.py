@@ -45,7 +45,6 @@ def run_supervised(
 
     claim_slice_lock(lock_file, os.getpid(), role=role)
     try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
         exit_code = _run_child(argv, cwd, log_file)
         _record_outcome(role, target_file, project_root, exit_code, log_file)
         return exit_code
@@ -54,8 +53,21 @@ def run_supervised(
 
 
 def _run_child(argv: list, cwd: Path, log_file: Path) -> int:
-    """Spawn the agent with both streams captured. A failure to start is an outcome."""
-    with open(log_file, "w", encoding="utf-8", errors="replace") as log:
+    """Spawn the agent with both streams captured.
+
+    A failure to even create/open the log file is treated as an outcome
+    (synthesized non-zero exit), not an exception — letting it propagate
+    would skip _record_outcome entirely and strand the slice at its
+    in-progress status with no way back.
+    """
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(log_file, "w", encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"[runner] could not create/open log file {log_file}: {exc}")
+        return 127
+
+    with handle as log:
         log.write(f"$ {' '.join(str(part) for part in argv)}\n\n")
         log.flush()
         try:
@@ -71,6 +83,24 @@ def _run_child(argv: list, cwd: Path, log_file: Path) -> int:
         return completed.returncode
 
 
+def _log_and_print(log_file: Path, message: str) -> None:
+    """Print a diagnostic AND append it to the log file.
+
+    By the time this runs, the runner is typically a detached background
+    job (Task 11 spawns it with no attached console) — stdout is a closed
+    handle or the null device. The log file is the one artifact the
+    dispatcher tells the operator to inspect, so outcome diagnostics belong
+    there too, not only on a stream nobody is reading. Best-effort: a
+    log-append failure here must not mask the outcome already recorded.
+    """
+    print(message)
+    try:
+        with open(log_file, "a", encoding="utf-8", errors="replace") as log:
+            log.write(message + "\n")
+    except OSError:
+        pass
+
+
 def _record_outcome(
     role: str, target_file: Path, project_root: Path, exit_code: int, log_file: Path
 ) -> None:
@@ -80,7 +110,9 @@ def _record_outcome(
         validate_config(config)
         agent = resolve_agent(config, role)
     except OrchestratorError as exc:
-        print(f"[runner] configuration unusable, cannot record outcome: {exc}")
+        _log_and_print(
+            log_file, f"[runner] configuration unusable, cannot record outcome: {exc}"
+        )
         return
 
     state_machine = config["state_machine"]
@@ -92,14 +124,30 @@ def _record_outcome(
         event = f"on_{role}_failed"
 
     if new_status:
-        update_frontmatter_status(
+        updated = update_frontmatter_status(
             target_file,
             new_status,
             state_machine["valid_statuses"],
             state_machine["transitions"],
         )
+        if not updated:
+            _log_and_print(
+                log_file,
+                f"[runner] ERROR: could not set status to '{new_status}' for "
+                f"{target_file} (illegal transition, missing file, or "
+                f"unparsable frontmatter) — the slice's on-disk status was "
+                f"NOT updated and does not reflect this outcome.",
+            )
+    else:
+        _log_and_print(
+            log_file,
+            f"[runner] WARNING: agent '{role}' has no success_status configured; "
+            f"the slice's on-disk status was not updated.",
+        )
 
-    print(f"[runner] {role} exited {exit_code}; status -> {new_status}; log: {log_file}")
+    _log_and_print(
+        log_file, f"[runner] {role} exited {exit_code}; status -> {new_status}; log: {log_file}"
+    )
 
     try:
         run_infrastructure_hook(
@@ -110,7 +158,7 @@ def _record_outcome(
     except HookError as exc:
         # The agent's own outcome is already recorded; a failing completion
         # hook must not overwrite it.
-        print(f"[runner] completion hook failed: {exc}")
+        _log_and_print(log_file, f"[runner] completion hook failed: {exc}")
 
 
 def main(argv=None) -> int:
