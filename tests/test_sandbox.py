@@ -133,3 +133,130 @@ def test_render_env_expands_process_environment(monkeypatch):
         "127.0.0.7", "feat-a",
     )
     assert rendered["dsn"] == "postgres://u:s3cret@127.0.0.7/db"
+
+
+def _sandbox_config(**overrides):
+    cfg = {
+        "enabled": True,
+        "compose_file": "docker-compose.yml",
+        "health_service": None,
+        "health_timeout": 5,
+        "env": {"dsn": "postgres://{ip}:5432/db"},
+        "teardown": {"on_verified_closed": "volumes", "on_failed": "containers"},
+    }
+    cfg.update(overrides)
+    return {"sandbox": cfg}
+
+
+def test_ensure_up_addresses_the_branch_it_was_given(tmp_path, stub_docker):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    env = sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+
+    assert env["COMPOSE_PROJECT_NAME"] == "feat-alpha"
+    assert env["dsn"] == f"postgres://{env['LOOPBACK_IP']}:5432/db"
+    argv = stub_docker.argv_of(0)
+    assert argv[:2] == ["compose", "-p"]
+    assert argv[2] == "feat-alpha"
+    assert argv[-2:] == ["up", "-d"]
+    assert stub_docker.calls[0]["loopback_ip"] == env["LOOPBACK_IP"]
+
+
+def test_ensure_up_is_idempotent_on_the_address(tmp_path, stub_docker):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    first = sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+    second = sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+    assert first["LOOPBACK_IP"] == second["LOOPBACK_IP"]
+
+
+def test_ensure_up_is_inert_when_disabled(tmp_path, stub_docker):
+    assert sandbox.ensure_up("feat/a", tmp_path, _sandbox_config(enabled=False)) == {}
+    assert stub_docker.calls == []
+
+
+def test_ensure_up_fails_closed_without_a_compose_file(tmp_path, stub_docker):
+    with pytest.raises(OrchestratorError, match="docker-compose.yml"):
+        sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+
+
+def test_ensure_up_fails_closed_when_compose_fails(tmp_path, stub_docker, monkeypatch):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    monkeypatch.setenv("SUPERPOWERS_DOCKER_EXIT", "1")
+    with pytest.raises(OrchestratorError):
+        sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+
+
+def test_resolve_env_has_no_side_effects(tmp_path, stub_docker):
+    assert sandbox.resolve_env("feat/alpha", tmp_path, _sandbox_config()) == {}
+    assert stub_docker.calls == []
+
+
+def test_teardown_containers_keeps_state_and_omits_dash_v(tmp_path, stub_docker):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+
+    sandbox.tear_down("feat/alpha", tmp_path, _sandbox_config(), "containers")
+
+    argv = stub_docker.argv_of(-1)
+    assert argv[-1] == "down"
+    assert "-v" not in argv
+    assert sandbox.read_state(tmp_path, "feat/alpha") is not None
+
+
+def test_teardown_volumes_destroys_state(tmp_path, stub_docker):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+
+    sandbox.tear_down("feat/alpha", tmp_path, _sandbox_config(), "volumes")
+
+    assert stub_docker.argv_of(-1)[-2:] == ["down", "-v"]
+    assert sandbox.read_state(tmp_path, "feat/alpha") is None
+
+
+def test_health_gate_blocks_when_the_service_never_reports_healthy(
+    tmp_path, stub_docker, monkeypatch
+):
+    """An agent dispatched at a stack that is not ready fails on its first
+    connection, and the reason surfaces only in the agent's own log. Refuse
+    at dispatch instead."""
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    # The stub only prints a healthy record when --format is present; drop the
+    # marker it looks for so `ps` never reports healthy.
+    monkeypatch.setattr(sandbox, "_compose", _never_healthy(sandbox._compose))
+
+    with pytest.raises(OrchestratorError, match="healthy"):
+        sandbox.ensure_up(
+            "feat/alpha", tmp_path,
+            _sandbox_config(health_service="postgres", health_timeout=1),
+        )
+
+
+def _never_healthy(real_compose):
+    def wrapper(project_root, cfg, state, args, env, capture=False):
+        if capture:
+            class Result:
+                stdout = '{"Service": "postgres", "Health": "starting"}'
+                returncode = 0
+            return Result()
+        return real_compose(project_root, cfg, state, args, env, capture)
+    return wrapper
+
+
+def test_health_gate_passes_when_the_service_is_healthy(tmp_path, stub_docker):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    env = sandbox.ensure_up(
+        "feat/alpha", tmp_path,
+        _sandbox_config(health_service="postgres", health_timeout=5),
+    )
+    assert env["LOOPBACK_IP"].startswith("127.0.0.")
+
+
+def test_teardown_none_touches_nothing(tmp_path, stub_docker):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    sandbox.ensure_up("feat/alpha", tmp_path, _sandbox_config())
+    before = len(stub_docker.calls)
+
+    sandbox.tear_down("feat/alpha", tmp_path, _sandbox_config(), "none")
+
+    assert len(stub_docker.calls) == before
+    assert sandbox.read_state(tmp_path, "feat/alpha") is not None

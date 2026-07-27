@@ -19,6 +19,9 @@ import json
 import os
 import re
 import socket
+import subprocess
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -178,3 +181,131 @@ def render_env(sandbox_cfg: dict, ip: str, project: str) -> dict:
         expanded = os.path.expandvars(str(template))
         rendered[name] = expanded.replace("{ip}", ip).replace("{project}", project)
     return rendered
+
+
+def docker_command() -> list:
+    """The argv prefix that invokes docker.
+
+    `SUPERPOWERS_DOCKER_BIN` may hold a plain path or a JSON argv list. The
+    list form exists for tests: it lets a stub be `[python, stub.py]` with no
+    shebang on POSIX and no .cmd shim on Windows, and -- unlike a
+    monkeypatch -- it survives into the detached supervisor process.
+    """
+    raw = (os.environ.get("SUPERPOWERS_DOCKER_BIN") or "").strip()
+    if not raw:
+        return ["docker"]
+    if raw.startswith("["):
+        return [str(part) for part in json.loads(raw)]
+    return [raw]
+
+
+def _compose_file(project_root: Path, sandbox_cfg: dict) -> Path:
+    return Path(project_root) / (
+        sandbox_cfg.get("compose_file") or "docker-compose.yml"
+    )
+
+
+def _compose(project_root: Path, sandbox_cfg: dict, state: SandboxState,
+             args: list, env: dict, capture: bool = False):
+    argv = [
+        *docker_command(), "compose",
+        "-p", state.project_name,
+        "-f", str(_compose_file(project_root, sandbox_cfg)),
+        *args,
+    ]
+    result = subprocess.run(
+        argv, cwd=str(project_root), env={**os.environ, **env},
+        capture_output=capture, text=True,
+    )
+    if result.returncode != 0 and not capture:
+        raise SandboxError(
+            f"`{' '.join(argv)}` exited {result.returncode}. The stack for "
+            f"branch {state.branch!r} is not in the requested state."
+        )
+    return result
+
+
+def _busy_ips(project_root: Path) -> set:
+    return {record.ip for record in list_states(project_root)}
+
+
+def _await_health(project_root: Path, sandbox_cfg: dict, state: SandboxState,
+                  env: dict) -> None:
+    service = sandbox_cfg.get("health_service")
+    if not service:
+        return
+    timeout = float(sandbox_cfg.get("health_timeout") or 60)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = _compose(
+            project_root, sandbox_cfg, state,
+            ["ps", "--format", "json", service], env, capture=True,
+        )
+        if '"healthy"' in (result.stdout or ""):
+            return
+        time.sleep(1.0)
+    raise SandboxError(
+        f"Service '{service}' did not report healthy within {timeout:g}s for "
+        f"branch {state.branch!r}. Refusing to dispatch an agent at a stack "
+        f"that is not ready -- it would fail on its first connection and the "
+        f"reason would only surface in the agent's own log."
+    )
+
+
+def resolve_env(branch: str, project_root, config: dict) -> dict:
+    """The environment for an existing stack. No side effects, no docker."""
+    sandbox_cfg = config.get("sandbox") or {}
+    if not sandbox_cfg.get("enabled"):
+        return {}
+    state = read_state(project_root, branch)
+    if state is None:
+        return {}
+    return render_env(sandbox_cfg, state.ip, state.project_name)
+
+
+def ensure_up(branch: str, project_root, config: dict) -> dict:
+    """Bring this branch's stack up, allocating an address if it has none."""
+    sandbox_cfg = config.get("sandbox") or {}
+    if not sandbox_cfg.get("enabled"):
+        return {}
+
+    project_root = Path(project_root)
+    compose_file = _compose_file(project_root, sandbox_cfg)
+    if not compose_file.is_file():
+        raise SandboxError(
+            f"sandbox.enabled is true but {compose_file} does not exist. "
+            f"A project that asks for a sandbox must ship a compose file."
+        )
+
+    state = read_state(project_root, branch)
+    if state is None:
+        state = SandboxState(
+            branch=branch,
+            ip=ip_for(branch, busy=_busy_ips(project_root)),
+            project_name=project_name_for(branch),
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
+        write_state(project_root, state)
+
+    env = render_env(sandbox_cfg, state.ip, state.project_name)
+    _compose(project_root, sandbox_cfg, state, ["up", "-d"], env)
+    _await_health(project_root, sandbox_cfg, state, env)
+    return env
+
+
+def tear_down(branch: str, project_root, config: dict, mode: str) -> None:
+    """Stop this branch's stack. `mode` decides how much is destroyed."""
+    sandbox_cfg = config.get("sandbox") or {}
+    if not sandbox_cfg.get("enabled") or mode == "none":
+        return
+    state = read_state(project_root, branch)
+    if state is None:
+        return
+
+    env = render_env(sandbox_cfg, state.ip, state.project_name)
+    args = ["down", "-v"] if mode == "volumes" else ["down"]
+    _compose(Path(project_root), sandbox_cfg, state, args, env)
+
+    # The one state rule: the record dies with the volumes, and only with them.
+    if mode == "volumes":
+        clear_state(project_root, branch)

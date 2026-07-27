@@ -8,7 +8,9 @@ installed on the development machine and a live run costs money. No test may
 invoke it.
 """
 
+import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,56 @@ class StubAdapter(HarnessAdapter):
     def build_command(self, agent_config, task_prompt):
         return [sys.executable, "-c", agent_config.get("model", "print('stub ok')")]
 '''
+
+STUB_DOCKER = '''
+import json, os, sys
+record = os.environ["SUPERPOWERS_DOCKER_LOG"]
+with open(record, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps({
+        "argv": sys.argv[1:],
+        "loopback_ip": os.environ.get("LOOPBACK_IP"),
+        "compose_project": os.environ.get("COMPOSE_PROJECT_NAME"),
+    }) + "\\n")
+if "--format" in sys.argv:
+    print(json.dumps({"Service": "postgres", "Health": "healthy"}))
+sys.exit(int(os.environ.get("SUPERPOWERS_DOCKER_EXIT", "0")))
+'''
+
+
+class StubDocker:
+    def __init__(self, script, log):
+        self.script = script
+        self.log = log
+
+    @property
+    def calls(self):
+        if not self.log.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.log.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def argv_of(self, index):
+        return self.calls[index]["argv"]
+
+
+@pytest.fixture
+def stub_docker(tmp_path, monkeypatch):
+    """A fake `docker` that records argv instead of starting containers.
+
+    Installed through the environment rather than by monkeypatching, so it
+    is still in effect inside the detached supervisor process.
+    """
+    script = tmp_path / "stub_docker.py"
+    script.write_text(STUB_DOCKER, encoding="utf-8")
+    log = tmp_path / "docker-calls.jsonl"
+    monkeypatch.setenv(
+        "SUPERPOWERS_DOCKER_BIN", json.dumps([sys.executable, str(script)])
+    )
+    monkeypatch.setenv("SUPERPOWERS_DOCKER_LOG", str(log))
+    return StubDocker(script, log)
 
 
 def _git(cwd, *args):
