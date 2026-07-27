@@ -121,11 +121,16 @@ def cmd_set_status(args):
     if not update_frontmatter_status(filepath, "VERIFIED_CLOSED", valid_statuses, transitions):
         sys.exit(1)
 
-    run_infrastructure_hook(
-        "on_slice_verified_closed",
-        project_root=project_root,
-        known_events=canonical_events(config.get("agents", {})),
-    )
+    try:
+        run_infrastructure_hook(
+            "on_slice_verified_closed",
+            project_root=project_root,
+            known_events=canonical_events(config.get("agents", {})),
+        )
+    except OrchestratorError as exc:
+        # The merge and the status write already succeeded; a failing
+        # post-merge hook must not be reported as if the merge itself failed.
+        print(f"Warning: on_slice_verified_closed hook failed: {exc}")
 
 
 def cmd_trigger_hook(args):

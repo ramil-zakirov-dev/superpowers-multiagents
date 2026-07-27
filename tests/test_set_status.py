@@ -58,3 +58,24 @@ def test_conflict_lands_in_merge_conflict_not_verified_closed(tmp_project, demo_
         cmd_set_status(argparse.Namespace(file=str(demo_spec), status="VERIFIED_CLOSED"))
 
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "MERGE_CONFLICT"
+
+
+def test_failing_post_merge_hook_does_not_undo_the_merge_or_crash(tmp_project, demo_spec):
+    """A failing on_slice_verified_closed hook must not be reported as if the
+    merge itself failed -- the merge and status write already succeeded."""
+    (tmp_project / ".superpowers" / "hooks.yaml").write_text(
+        'hooks:\n  on_slice_verified_closed:\n    command: "exit 9"\n', encoding="utf-8"
+    )
+    _set_raw_status(demo_spec, "EXECUTION_COMPLETE")
+    _git(tmp_project, "add", "-A")
+    _git(tmp_project, "commit", "-qm", "wip")
+
+    worktree = create_git_worktree("slice-01-demo", tmp_project)
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-qm", "feat: work")
+
+    cmd_set_status(argparse.Namespace(file=str(demo_spec), status="VERIFIED_CLOSED"))
+
+    assert (tmp_project / "feature.py").exists()
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "VERIFIED_CLOSED"
