@@ -86,9 +86,12 @@ See [configuration.md](configuration.md) for the full `agents.yaml` schema.
 
 ## State Machine
 
-The default lifecycle has 9 states. Both statuses and transitions can be overridden in `agents.yaml`.
+The default lifecycle has 10 states. Both statuses and transitions can be overridden in `agents.yaml`.
 
 ```
 DRAFT_SPEC → SPEC_APPROVED → PLANNING → PLAN_GENERATED → PLAN_APPROVED → EXECUTING → EXECUTION_COMPLETE → VERIFIED_CLOSED
                                                                                          ↘ MERGE_CONFLICT ↗
+                                              ↘ FAILED (orchestrator exit !=0) ↗
 ```
+
+`FAILED` is set by the orchestrator, from the dispatched agent's exit code, never by the agent itself. It returns the slice to the gate it came from — `PLANNING → FAILED → SPEC_APPROVED`, `EXECUTING → FAILED → PLAN_APPROVED` — so a crashed or misbehaving agent never strands a slice.

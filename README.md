@@ -162,8 +162,10 @@ python -m scripts.orchestrator trigger-hook --event on_slice_executor_start --di
 ## 🧪 Testing
 
 ```bash
-python -m pytest tests/test_orchestrator.py -v
+python -m pytest tests/ -v -p no:cacheprovider
 ```
+
+No test invokes a real harness — dispatch tests wire in a stub adapter instead.
 
 ---
 

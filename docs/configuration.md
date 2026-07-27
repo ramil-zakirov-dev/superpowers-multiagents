@@ -34,12 +34,12 @@ state_machine:
   transitions:
     DRAFT_SPEC: ["SPEC_APPROVED"]
     SPEC_APPROVED: ["PLANNING", "DRAFT_SPEC"]
-    PLANNING: ["PLAN_GENERATED"]
+    PLANNING: ["PLAN_GENERATED", "FAILED"]
     PLAN_GENERATED: ["PLAN_APPROVED", "PLANNING"]
     PLAN_APPROVED: ["EXECUTING", "PLAN_GENERATED"]
-    EXECUTING: ["EXECUTION_COMPLETE", "FAILED", "MERGE_CONFLICT"]
+    EXECUTING: ["EXECUTION_COMPLETE", "MERGE_CONFLICT", "FAILED"]
     EXECUTION_COMPLETE: ["VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"]
-    FAILED: ["EXECUTING", "PLANNING", "PLAN_APPROVED"]
+    FAILED: ["SPEC_APPROVED", "PLAN_APPROVED"]
     VERIFIED_CLOSED: []
     MERGE_CONFLICT: ["VERIFIED_CLOSED", "EXECUTING", "PLAN_APPROVED"]
 
@@ -52,6 +52,7 @@ agents:
     allowed_statuses:
       - SPEC_APPROVED
     in_progress_status: PLANNING
+    success_status: PLAN_GENERATED
     isolated_worktree: false
     prompt_template: 'Read spec at {file} and create detailed TDD implementation plan using writing-plans skill. Save to docs/superpowers/plans/'
     extra_args: []
@@ -63,6 +64,7 @@ agents:
     allowed_statuses:
       - PLAN_APPROVED
     in_progress_status: EXECUTING
+    success_status: EXECUTION_COMPLETE
     isolated_worktree: true
     prompt_template: 'Execute implementation plan at {file} using TDD subagent execution. Check off tasks in plan as completed.'
     extra_args: []
