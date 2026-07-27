@@ -1,0 +1,8 @@
+# hooks/run-hook.cmd is a polyglot: valid as both a POSIX shell script and a
+# Windows batch file. Its bash path relies on a heredoc terminator
+# (`CMDBLOCK`) matching a line literally -- a CRLF line ending (e.g. from a
+# clone with core.autocrlf=true) makes the terminator fail to match, which
+# silently swallows the rest of the file into the heredoc instead of raising
+# a visible error. Force LF regardless of clone-time autocrlf settings.
+hooks/run-hook.cmd text eol=lf
+hooks/session-start text eol=lf
