@@ -65,6 +65,35 @@ def test_env_emits_powershell_assignments(tmp_project, stub_docker, capsys):
     assert '$env:LOOPBACK_IP = "127.0.0.' in capsys.readouterr().out
 
 
+def test_quote_posix_quotes_trailing_newline():
+    """A trailing-newline value must not slip through the unanchored `$`
+    loophole in `re.match(r"...$")` (which matches before a trailing `\n`).
+    """
+    from scripts.orchestrator import _quote_posix
+
+    quoted = _quote_posix("abc\n")
+
+    assert quoted == "'abc\n'"
+    assert quoted.startswith("'") and quoted.endswith("'")
+
+
+def test_env_emits_powershell_escaped_assignments(tmp_project, stub_docker, capsys):
+    from scripts import sandbox
+
+    (tmp_project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    config = {"sandbox": {"enabled": True, "compose_file": "docker-compose.yml",
+                          "env": {"greeting": 'say "hi" `there`'}, "teardown": {}}}
+    sandbox.ensure_up("feat/alpha", tmp_project, config)
+    _enable_sandbox(
+        tmp_project, "  env:\n    greeting: 'say \"hi\" `there`'\n"
+    )
+
+    cmd_sandbox(_args("env", dir=str(tmp_project), branch="feat/alpha", shell="powershell"))
+
+    out = capsys.readouterr().out
+    assert '$env:greeting = "say `"hi`" ``there``"' in out
+
+
 def test_env_emits_json(tmp_project, stub_docker, capsys):
     from scripts import sandbox
 

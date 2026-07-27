@@ -323,9 +323,14 @@ def cmd_dispatch_agent(args):
 
 
 def _quote_posix(value: str) -> str:
-    if re.match(r"^[A-Za-z0-9_\-./:=]+$", value):
+    if re.fullmatch(r"[A-Za-z0-9_\-./:=]+", value):
         return value
     return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _quote_powershell(value: str) -> str:
+    escaped = value.replace("`", "``").replace("$", "`$").replace('"', '`"')
+    return escaped
 
 
 def cmd_sandbox(args):
@@ -380,7 +385,7 @@ def cmd_sandbox(args):
                 print(json.dumps(env, indent=2))
             elif args.shell == "powershell":
                 for key, value in env.items():
-                    print(f'$env:{key} = "{value}"')
+                    print(f'$env:{key} = "{_quote_powershell(value)}"')
             else:
                 for key, value in env.items():
                     print(f"export {key}={_quote_posix(value)}")
