@@ -1,5 +1,6 @@
 import errno
 import socket
+import time
 
 import pytest
 
@@ -237,6 +238,44 @@ def _never_healthy(real_compose):
             class Result:
                 stdout = '{"Service": "postgres", "Health": "starting"}'
                 returncode = 0
+            return Result()
+        return real_compose(project_root, cfg, state, args, env, capture)
+    return wrapper
+
+
+def test_health_gate_surfaces_the_real_error_when_the_probe_itself_fails(
+    tmp_path, stub_docker, monkeypatch
+):
+    """A broken `docker compose ps` (bad service name, unreachable daemon,
+    malformed compose file) must not be indistinguishable from a container
+    that is merely slow to start: it should fail immediately, with the real
+    stderr, not after the full health_timeout with the generic message."""
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sandbox, "_compose", _broken_probe(sandbox._compose)
+    )
+
+    start = time.monotonic()
+    with pytest.raises(OrchestratorError, match="boom: no such service") as exc_info:
+        sandbox.ensure_up(
+            "feat/alpha", tmp_path,
+            # A long timeout: if the bug regresses, this test would hang
+            # until it elapses instead of failing fast.
+            _sandbox_config(health_service="postgres", health_timeout=30),
+        )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5, "should fail immediately, not wait out health_timeout"
+    assert "did not report healthy" not in str(exc_info.value)
+
+
+def _broken_probe(real_compose):
+    def wrapper(project_root, cfg, state, args, env, capture=False):
+        if capture:
+            class Result:
+                stdout = ""
+                stderr = "boom: no such service\n"
+                returncode = 1
             return Result()
         return real_compose(project_root, cfg, state, args, env, capture)
     return wrapper

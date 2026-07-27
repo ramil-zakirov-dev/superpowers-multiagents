@@ -241,6 +241,13 @@ def _await_health(project_root: Path, sandbox_cfg: dict, state: SandboxState,
             project_root, sandbox_cfg, state,
             ["ps", "--format", "json", service], env, capture=True,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise SandboxError(
+                f"`docker compose ps` for service {service!r} (branch "
+                f"{state.branch!r}) exited {result.returncode} while polling "
+                f"for health: {detail or '(no output)'}"
+            )
         if '"healthy"' in (result.stdout or ""):
             return
         time.sleep(1.0)
