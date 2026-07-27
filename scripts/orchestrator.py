@@ -6,21 +6,44 @@ Thin entry point that wires together the modular components:
 config, frontmatter, adapters, git_ops, hooks, locks, dependencies.
 """
 
-import sys
-import os
-import json
 import argparse
+import os
 import subprocess
+import sys
 from pathlib import Path
 
-from scripts.config import load_agent_config, DEFAULT_CONFIG
-from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
-from scripts.utils import find_project_root
+if __package__ in (None, ""):  # invoked as a script rather than `-m`
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from scripts.adapters import get_harness_adapter
-from scripts.git_ops import create_git_worktree, merge_and_cleanup_worktree
-from scripts.hooks import load_project_hooks, run_infrastructure_hook
-from scripts.locks import acquire_slice_lock, release_slice_lock
+from scripts.config import load_agent_config, resolve_agent, validate_config
 from scripts.dependencies import check_unmet_dependencies
+from scripts.errors import OrchestratorError
+from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
+from scripts.git_ops import create_git_worktree, merge_and_cleanup_worktree
+from scripts.hooks import canonical_events, run_infrastructure_hook
+from scripts.locks import acquire_slice_lock, release_slice_lock_file
+from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
+from scripts.utils import find_project_root
+
+#: Root of this plugin — the supervisor is spawned with this as its cwd so
+#: that `python -m scripts.runner` resolves regardless of the user's cwd.
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _warn_if_artifacts_not_ignored(project_root: Path) -> None:
+    """Suggest ignoring our runtime paths, without touching the user's file."""
+    result = subprocess.run(
+        ["git", "check-ignore", *ARTIFACT_PREFIXES],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    ignored = set(result.stdout.split())
+    missing = [p for p in ARTIFACT_PREFIXES if p not in ignored and p.rstrip("/") not in ignored]
+    if missing:
+        print(
+            "Hint: consider adding these to .gitignore so they stay out of your diffs: "
+            + " ".join(missing)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -87,106 +110,122 @@ def cmd_trigger_hook(args):
 
 
 def cmd_dispatch_agent(args):
-    """Generic agent dispatcher — handles any role defined in agents.yaml."""
-    target_file = Path(args.file)
+    """Dispatch an agent by role.
+
+    Ordering is load-bearing: every step that can fail runs before the first
+    irreversible mutation, so a failed precondition never leaves a slice that
+    has to be repaired by hand.
+    """
+    target_file = Path(args.file).resolve()
     if not target_file.exists():
         print(f"Error: Target file '{target_file}' not found.")
         sys.exit(1)
 
     role = args.role
     project_root = find_project_root(target_file)
-    config = load_agent_config(project_root)
-    sm = config["state_machine"]
 
-    agent_config = config.get("agents", {}).get(role)
-    if not agent_config:
-        print(f"Error: Agent role '{role}' is not defined in the configuration.")
+    # 1. Configuration
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+        agent_config = resolve_agent(config, role)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
         sys.exit(1)
 
-    # Allow runtime model override
-    if hasattr(args, "model") and args.model:
+    state_machine = config["state_machine"]
+    known_events = canonical_events(config.get("agents", {}))
+
+    if getattr(args, "model", None):
         agent_config["model"] = args.model
 
-    # Dependency gate
+    # 2. Gates
     unmet = check_unmet_dependencies(target_file)
     if unmet:
-        print(f"❌ [Dependency Gate] Cannot dispatch {role} for {target_file.name}. Unmet dependencies:")
-        for dep in unmet:
-            print(f"   - {dep}")
+        print(f"[Dependency Gate] Cannot dispatch {role} for {target_file.name}. Unmet:")
+        for dependency in unmet:
+            print(f"   - {dependency}")
         sys.exit(1)
 
-    # State validation
-    fm = parse_frontmatter(target_file.read_text(encoding="utf-8"))
-    slice_id = fm.get("slice_id", target_file.stem)
-    current_status = fm.get("status", "UNKNOWN")
+    frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+    slice_id = frontmatter.get("slice_id", target_file.stem)
+    current_status = frontmatter.get("status", "UNKNOWN")
 
-    allowed_statuses = agent_config.get("allowed_statuses", [])
+    allowed_statuses = agent_config.get("allowed_statuses") or []
     if allowed_statuses and current_status not in allowed_statuses:
-        print(f"❌ [State Validation] Cannot dispatch {role} for {target_file.name}.")
-        print(f"   Current status is '{current_status}', but {role} requires one of: {allowed_statuses}")
+        print(f"[State Validation] Cannot dispatch {role} for {target_file.name}.")
+        print(f"   Current status is '{current_status}'; {role} requires one of: {allowed_statuses}")
         sys.exit(1)
 
-    # Concurrency lock
-    lock_file = acquire_slice_lock(slice_id, project_root)
+    # 3. Lock
+    try:
+        lock_file = acquire_slice_lock(slice_id, project_root)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
 
-    # Worktree isolation
-    if agent_config.get("isolated_worktree", False):
-        cwd = create_git_worktree(slice_id, project_root)
-    else:
-        cwd = project_root
+    # 4-5. Fallible side effects, before any mutation we would have to undo
+    try:
+        env = run_infrastructure_hook(
+            f"on_slice_{role}_start", project_root=project_root, known_events=known_events
+        )
+        if agent_config.get("isolated_worktree", False):
+            cwd = create_git_worktree(slice_id, project_root)
+        else:
+            cwd = project_root
+    except OrchestratorError as exc:
+        release_slice_lock_file(lock_file)
+        print(f"Error: {exc}")
+        print(f"Slice '{slice_id}' left untouched at status '{current_status}'.")
+        sys.exit(1)
 
-    # Transition to in-progress status
+    # 6. First irreversible mutation
     in_progress_status = agent_config.get("in_progress_status")
     if in_progress_status:
         update_frontmatter_status(
             target_file, in_progress_status,
-            sm["valid_statuses"], sm["transitions"],
+            state_machine["valid_statuses"], state_machine["transitions"],
         )
 
-    # Infrastructure hook
-    env = run_infrastructure_hook(f"on_slice_{role}_start", project_root=project_root)
+    # 7. Spawn the supervisor
+    log_file = log_path(project_root, role, target_file.stem)
+    logs_dir(project_root).mkdir(parents=True, exist_ok=True)
 
-    # Build command via adapter
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    log_file = logs_dir / f"{role}_{target_file.stem}.log"
+    prompt_template = agent_config.get("prompt_template", "Process {file}")
+    task_prompt = prompt_template.format(file=target_file)
 
-    template = agent_config.get("prompt_template", "Process {file}")
-    task_prompt = template.format(file=target_file.resolve())
+    try:
+        adapter = get_harness_adapter(agent_config, project_root)
+        agent_argv = adapter.build_command(agent_config, task_prompt)
+    except OrchestratorError as exc:
+        release_slice_lock_file(lock_file)
+        print(f"Error: {exc}")
+        sys.exit(1)
 
-    adapter = get_harness_adapter(agent_config, project_root)
-    base_cmd = adapter.build_command(agent_config, task_prompt)
+    runner_argv = [
+        sys.executable, "-m", "scripts.runner",
+        "--role", role,
+        "--file", str(target_file),
+        "--project-root", str(project_root),
+        "--lock", str(lock_file),
+        "--log", str(log_file),
+        "--cwd", str(cwd),
+        "--", *[str(part) for part in agent_argv],
+    ]
 
-    # Chain completion hook
-    orchestrator_path = Path(__file__).resolve()
-    chained_cmd = (
-        f'{base_cmd} && python "{orchestrator_path}" '
-        f'trigger-hook --event on_{role}_complete --dir "{project_root}"'
-    )
-
-    print(f"Dispatching {agent_config.get('model')} {role.capitalize()} in background...")
-    print(f"Log: {log_file}")
-
+    spawn_kwargs = {"cwd": str(PLUGIN_ROOT), "env": env}
     if os.name == "nt":
-        proc = subprocess.Popen(
-            f'cmd.exe /c "{chained_cmd} > {log_file} 2>&1"',
-            shell=True, cwd=cwd, env=env,
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        spawn_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
         )
     else:
-        proc = subprocess.Popen(
-            f"nohup bash -c '{chained_cmd}' > {log_file} 2>&1 &",
-            shell=True, cwd=cwd, env=env,
-        )
+        spawn_kwargs["start_new_session"] = True
 
-    # Update lock with worker metadata
-    lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
-    lock_data["worker_pid"] = proc.pid
-    lock_data["model"] = agent_config.get("model")
-    lock_data["role"] = role
-    lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+    process = subprocess.Popen(runner_argv, **spawn_kwargs)
 
-    print(f"{role.capitalize()} dispatched successfully. PID: {proc.pid}")
+    print(f"Dispatched {agent_config.get('model')} as {role} (supervisor PID {process.pid}).")
+    print(f"Log: {log_file}")
+    _warn_if_artifacts_not_ignored(project_root)
 
 
 def cmd_summary(args):
