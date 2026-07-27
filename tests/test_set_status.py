@@ -98,3 +98,42 @@ def test_failing_post_merge_hook_does_not_undo_the_merge_or_crash(tmp_project, d
 
     assert (tmp_project / "feature.py").exists()
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "VERIFIED_CLOSED"
+
+
+def test_verified_closed_destroys_volumes_and_state(tmp_project, demo_spec, stub_docker):
+    from scripts import sandbox
+
+    (tmp_project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    agents = tmp_project / ".superpowers" / "agents.yaml"
+    agents.write_text(
+        "sandbox:\n  enabled: true\n" + agents.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    # Same merge setup as test_verified_closed_merges_then_marks above. Without
+    # a real branch carrying a commit, cmd_set_status lands in MERGE_CONFLICT
+    # and exits before any teardown -- the test would go green for the wrong
+    # reason if the assertion were merely "no down -v happened".
+    _set_raw_status(demo_spec, "EXECUTION_COMPLETE")
+    _git(tmp_project, "add", "-A")
+    _git(tmp_project, "commit", "-qm", "wip")
+
+    worktree = create_git_worktree("slice-01-demo", tmp_project)
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-qm", "feat: work")
+
+    # Bring a stack up for the slice branch, exactly as dispatch would have.
+    config = {"sandbox": {"enabled": True, "compose_file": "docker-compose.yml",
+                          "env": {}, "teardown": {}}}
+    sandbox.ensure_up("feat/slice-01-demo", tmp_project, config)
+
+    # Commit the sandbox state files that ensure_up created
+    _git(tmp_project, "add", "-A")
+    _git(tmp_project, "commit", "-qm", "sandbox state")
+
+    cmd_set_status(argparse.Namespace(file=str(demo_spec), status="VERIFIED_CLOSED"))
+
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "VERIFIED_CLOSED"
+    assert stub_docker.argv_of(-1)[-2:] == ["down", "-v"]
+    assert sandbox.read_state(tmp_project, "feat/slice-01-demo") is None

@@ -150,6 +150,15 @@ def cmd_set_status(args):
         # post-merge hook must not be reported as if the merge itself failed.
         print(f"Warning: on_slice_verified_closed hook failed: {exc}")
 
+    mode = (
+        ((config.get("sandbox") or {}).get("teardown") or {})
+        .get("on_verified_closed", "volumes")
+    )
+    try:
+        sandbox.tear_down(f"feat/{slice_id}", project_root, config, mode)
+    except OrchestratorError as exc:
+        print(f"Warning: sandbox teardown failed: {exc}")
+
 
 def cmd_trigger_hook(args):
     """Manually or programmatically triggers an infrastructure hook."""
