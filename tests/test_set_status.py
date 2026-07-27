@@ -128,7 +128,9 @@ def test_verified_closed_destroys_volumes_and_state(tmp_project, demo_spec, stub
                           "env": {}, "teardown": {}}}
     sandbox.ensure_up("feat/slice-01-demo", tmp_project, config)
 
-    # Commit the sandbox state files that ensure_up created
+    # Commit any untracked test-harness artifacts (e.g., stub_docker fixture's
+    # docker-calls.jsonl log file). The sandbox state file (.superpowers/sandbox/*)
+    # is already artifact-excluded via ARTIFACT_PREFIXES.
     _git(tmp_project, "add", "-A")
     _git(tmp_project, "commit", "-qm", "sandbox state")
 
