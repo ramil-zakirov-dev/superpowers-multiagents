@@ -26,8 +26,32 @@ agents:
 """
 
 
+#: The same isolated executor with the `sandbox` block removed. Derived from
+#: SANDBOX_AGENTS rather than written out again so the two cannot drift: an
+#: edit to the agent definition can never leave the inertness guard below
+#: exercising a different agent than the tests around it.
+NO_SANDBOX_AGENTS = SANDBOX_AGENTS[SANDBOX_AGENTS.index("state_machine:"):]
+
+
 def _args(spec, role="executor"):
     return argparse.Namespace(role=role, file=str(spec), model=None)
+
+
+def _write_env_marker_hook(project_root, event, marker):
+    """Install a hook that records the sandbox variables it was handed.
+
+    The hook's environment is what the dispatched agent also receives, so
+    this is how a test observes injection when there is no sandbox state to
+    query directly.
+    """
+    (project_root / ".superpowers" / "hooks.yaml").write_text(
+        "hooks:\n"
+        f"  {event}:\n"
+        f'    command: "python -c \\"import os;open(r\'{marker.as_posix()}\',\'w\')'
+        '.write(os.environ.get(\'LOOPBACK_IP\',\'\')+chr(10)+'
+        'os.environ.get(\'COMPOSE_PROJECT_NAME\',\'\'))\\""\n',
+        encoding="utf-8",
+    )
 
 
 def _enable_sandbox(project_root):
@@ -137,6 +161,43 @@ def test_no_sandbox_block_means_no_docker(tmp_project, demo_spec, stub_docker):
     assert compose_project == "", (
         f"COMPOSE_PROJECT_NAME leaked into the agent's env with no sandbox "
         f"block: {compose_project!r}"
+    )
+
+
+def test_isolated_dispatch_without_a_sandbox_block_makes_no_docker_call(
+    tmp_project, demo_spec, stub_docker
+):
+    """The half of AC6 a planner-based guard structurally cannot reach.
+
+    A non-isolated agent goes through `resolve_env`, which returns an empty
+    mapping whenever no state exists — so on that path the `enabled` switch
+    is redundant and deleting it is invisible. Only an *isolated* dispatch
+    reaches `ensure_up`, where that switch is the single thing standing
+    between an unconfigured project and a real docker invocation.
+
+    A compose file is present on purpose. Without one, removing the switch
+    would fail on the missing file and this test would go red for the wrong
+    reason; with one, the mutant genuinely runs `up -d` and the assertion
+    below is what stops it.
+    """
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        NO_SANDBOX_AGENTS, encoding="utf-8"
+    )
+    (tmp_project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    marker = tmp_project / "hook-env.txt"
+    _write_env_marker_hook(tmp_project, "on_slice_executor_start", marker)
+
+    cmd_dispatch_agent(_args(demo_spec))
+
+    assert stub_docker.calls == [], (
+        f"docker was invoked for a project with no sandbox block: "
+        f"{stub_docker.calls}"
+    )
+
+    lines = marker.read_text(encoding="utf-8").splitlines()
+    assert (lines[0] if lines else "") == "", "LOOPBACK_IP leaked into an isolated agent"
+    assert (lines[1] if len(lines) > 1 else "") == "", (
+        "COMPOSE_PROJECT_NAME leaked into an isolated agent"
     )
 
 
