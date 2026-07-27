@@ -13,7 +13,8 @@ def test_project_name_follows_compose_rules():
     assert sandbox.project_name_for("") == "default"
 
 
-def test_ip_for_is_deterministic_and_never_loopback_one():
+def test_ip_for_is_deterministic_and_never_loopback_one(monkeypatch):
+    monkeypatch.setattr(sandbox, "_probe", lambda ip, port=0: "free")
     first = sandbox.ip_for("feat/alpha")
     second = sandbox.ip_for("feat/alpha")
     assert first == second
