@@ -33,11 +33,12 @@ This skill coordinates an N-level LLM architecture across configurable harnesses
 The orchestrator reads `.superpowers/agents.yaml` from the target project root. If this file does not exist, it falls back to defaults: Harness `opencode`, Provider `opencode-go`, Planner on `kimi-k3`, Executor on `minimax-m3`.
 
 Each agent can independently configure:
-- **`harness`**: CLI tool to use (`opencode`, `kimicode`, `mimocode`)
+- **`harness`**: CLI tool to use (built in: `opencode`; or a custom `harness_adapter`)
 - **`provider`**: LLM provider (e.g. `opencode-go`, `anthropic`)
 - **`model`**: Specific model identifier
 - **`allowed_statuses`**: State preconditions for dispatch
 - **`in_progress_status`**: Status to set before launching the agent
+- **`success_status`**: Status the orchestrator sets when the agent exits `0` (on non-zero exit, the orchestrator sets `FAILED` instead)
 - **`isolated_worktree`**: Whether to run in an isolated git worktree
 - **`prompt_template`**: Task prompt with `{file}` placeholder
 - **`extra_args`**: Additional CLI flags
@@ -103,8 +104,21 @@ python "<orchestrator>" set-status --file docs/superpowers/plans/YYYY-MM-DD-slic
 ```
 
 ### 5. Verify & Close Slice (When Execution is `EXECUTION_COMPLETE`)
+
+`VERIFIED_CLOSED` must target the **plan** file, not the design spec: the
+executor's `EXECUTION_COMPLETE` lands on whichever file it was dispatched
+against (the plan), and `VERIFIED_CLOSED` is only a legal transition from
+`EXECUTION_COMPLETE`. Running this against the spec file fails closed —
+merge-then-mark ordering means nothing is merged or deleted before the
+check, but the command exits non-zero either way.
+
+Commit the executor's `EXECUTION_COMPLETE` status write before running
+this — `set-status` requires the tree to be clean (aside from the
+orchestrator's own artifacts), and dispatch writes that status directly
+into the tracked plan file.
+
 ```bash
-python "<orchestrator>" set-status --file docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md --status VERIFIED_CLOSED
+python "<orchestrator>" set-status --file docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md --status VERIFIED_CLOSED
 ```
 And check off `[x]` in the corresponding Track in `docs/superpowers/milestones/YYYY-MM-DD-milestone-N.md`.
 

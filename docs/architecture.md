@@ -32,7 +32,7 @@ scripts/
 
 ## Adapter System
 
-The orchestrator dispatches agents to background CLI processes. The **adapter** translates an agent's config into a concrete shell command.
+The orchestrator dispatches agents to background CLI processes. The **adapter** translates an agent's config into a concrete argument vector — never a shell command string, so there is no shell to inject through.
 
 ### Built-in Adapters
 

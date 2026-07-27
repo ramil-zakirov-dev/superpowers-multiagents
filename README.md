@@ -133,6 +133,10 @@ When installed as a plugin:
 python "/abs/path/to/plugin/scripts/orchestrator.py" status --dir docs/superpowers
 ```
 
+The same absolute-path form works for every command below — `dispatch-agent`,
+`set-status`, `trigger-hook`, `summary` — not just `status`; it's shown once
+here for brevity.
+
 ### 3. Dispatch Agent (Generic)
 
 ```bash
