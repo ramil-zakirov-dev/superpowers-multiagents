@@ -20,6 +20,7 @@ from pathlib import Path
 if __package__ in (None, ""):  # invoked as a script rather than `-m`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import sandbox
 from scripts.config import load_agent_config, resolve_agent, validate_config
 from scripts.errors import HookError, OrchestratorError
 from scripts.frontmatter import update_frontmatter_status
@@ -37,6 +38,7 @@ def run_supervised(
     log_file: Path,
     argv: list,
     cwd: Path,
+    sandbox_branch: str = "",
 ) -> int:
     """Run one agent to completion and record the outcome. Returns its exit code."""
     target_file = Path(target_file)
@@ -46,7 +48,9 @@ def run_supervised(
     claim_slice_lock(lock_file, os.getpid(), role=role)
     try:
         exit_code = _run_child(argv, cwd, log_file)
-        _record_outcome(role, target_file, project_root, exit_code, log_file)
+        _record_outcome(
+            role, target_file, project_root, exit_code, log_file, sandbox_branch
+        )
         return exit_code
     finally:
         release_slice_lock_file(lock_file)
@@ -114,7 +118,12 @@ def _log_and_print(log_file: Path, message: str) -> None:
 
 
 def _record_outcome(
-    role: str, target_file: Path, project_root: Path, exit_code: int, log_file: Path
+    role: str,
+    target_file: Path,
+    project_root: Path,
+    exit_code: int,
+    log_file: Path,
+    sandbox_branch: str = "",
 ) -> None:
     """Advance the slice status and fire the completion hook."""
     try:
@@ -176,6 +185,18 @@ def _record_outcome(
         # hook must not overwrite it.
         _log_and_print(log_file, f"[runner] completion hook failed: {exc}")
 
+    if exit_code != 0 and sandbox_branch:
+        mode = (
+            ((config.get("sandbox") or {}).get("teardown") or {})
+            .get("on_failed", "containers")
+        )
+        try:
+            sandbox.tear_down(sandbox_branch, project_root, config, mode)
+        except OrchestratorError as exc:
+            # Same rule as the hook above: the slice's outcome is recorded and
+            # must not be overturned by a container that would not sweep.
+            _log_and_print(log_file, f"[runner] sandbox teardown failed: {exc}")
+
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Supervise one dispatched agent.")
@@ -185,9 +206,7 @@ def main(argv=None) -> int:
     parser.add_argument("--lock", required=True)
     parser.add_argument("--log", required=True)
     parser.add_argument("--cwd", required=True)
-    # Accepted so the supervisor's argv parses; not yet consumed here -- a
-    # later task uses it to tear the sandbox down on the agent's own outcome.
-    parser.add_argument("--sandbox-branch", default=None)
+    parser.add_argument("--sandbox-branch", default="")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
@@ -205,6 +224,7 @@ def main(argv=None) -> int:
         log_file=Path(args.log),
         argv=command,
         cwd=Path(args.cwd),
+        sandbox_branch=args.sandbox_branch,
     )
 
 

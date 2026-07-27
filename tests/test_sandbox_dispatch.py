@@ -156,6 +156,58 @@ def test_non_isolated_agent_attaches_but_never_starts_a_stack(
     assert marker.read_text(encoding="utf-8") == expected
 
 
+FAILING_EXECUTOR = SANDBOX_AGENTS.replace(
+    "model: \"print('stub ok')\"", "model: \"import sys; sys.exit(3)\""
+)
+
+
+def test_failed_slice_stops_containers_but_keeps_volumes(
+    tmp_project, demo_spec, stub_docker
+):
+    from scripts import sandbox
+
+    _enable_sandbox(tmp_project)
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        FAILING_EXECUTOR, encoding="utf-8"
+    )
+
+    cmd_dispatch_agent(_args(demo_spec))
+
+    assert _wait_for(
+        lambda: any(c["argv"][-1] == "down" for c in stub_docker.calls)
+    ), f"no teardown was recorded; calls were {stub_docker.calls}"
+
+    down = [c for c in stub_docker.calls if "down" in c["argv"]][-1]
+    assert "-v" not in down["argv"], "a failed slice must keep its volumes"
+    assert sandbox.read_state(tmp_project, "feat/slice-01-demo") is not None
+
+
+def test_failure_hook_observes_the_stack_before_teardown(
+    tmp_project, demo_spec, stub_docker
+):
+    journal = tmp_project / "journal.txt"
+    _enable_sandbox(tmp_project)
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        FAILING_EXECUTOR, encoding="utf-8"
+    )
+    (tmp_project / ".superpowers" / "hooks.yaml").write_text(
+        "hooks:\n"
+        "  on_executor_failed:\n"
+        f'    command: "python -c \\"open(r\'{journal.as_posix()}\',\'a\')'
+        '.write(\'hook\\\\n\')\\""\n',
+        encoding="utf-8",
+    )
+
+    cmd_dispatch_agent(_args(demo_spec))
+
+    assert _wait_for(lambda: journal.exists() and any(
+        "down" in c["argv"] for c in stub_docker.calls
+    ))
+    hook_time = journal.stat().st_mtime
+    docker_time = stub_docker.log.stat().st_mtime
+    assert hook_time <= docker_time, "teardown ran before the failure hook"
+
+
 def _set_status(spec, status):
     text = spec.read_text(encoding="utf-8")
     import re as _re
