@@ -401,6 +401,43 @@ def test_the_sync_is_idempotent_byte_for_byte():
     assert once == twice
 
 
+@pytest.mark.parametrize(
+    "hostile_title",
+    ["Native\nsandbox", "Native\r\nsandbox", "Native\tsandbox", "  padded  "],
+)
+def test_a_title_with_hostile_whitespace_cannot_break_the_region(hostile_title):
+    """The suffix is interpolated into a line-structured document.
+
+    `status` and `title` are read from another document's frontmatter, and YAML
+    admits newlines in a scalar. A newline landing inside an entry splits it:
+    the tail becomes its own line, the next sync re-renders the now-truncated
+    entry and appends the tail again, and the brief grows by one junk line on
+    every run — unbounded, because auto-sync fires on every slice closure.
+    """
+    table = {"slice-01-gateway": ("VERIFIED_CLOSED", hostile_title)}
+    resolve = _resolver(table)
+
+    once = milestone.sync_text(REGION_BRIEF, resolve)
+    twice = milestone.sync_text(once, resolve)
+
+    assert once == twice, "the sync stopped being idempotent"
+    assert once.count("\n") == REGION_BRIEF.count("\n"), (
+        "the region gained or lost a line"
+    )
+    assert milestone.track_entries(once) == milestone.track_entries(REGION_BRIEF), (
+        "an entry was corrupted into something that no longer parses as itself"
+    )
+
+
+def test_a_status_with_hostile_whitespace_is_neutralised_too():
+    """`status` is `data.get("status", ...)` — raw text from another file."""
+    resolve = _resolver({"slice-01-gateway": ("VERIFIED\nCLOSED", "Gateway")})
+
+    once = milestone.sync_text(REGION_BRIEF, resolve)
+
+    assert once.count("\n") == REGION_BRIEF.count("\n")
+
+
 def test_nothing_outside_the_markers_is_touched():
     out = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
 

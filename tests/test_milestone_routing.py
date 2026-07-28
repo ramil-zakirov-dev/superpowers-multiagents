@@ -268,11 +268,23 @@ def test_an_os_error_during_auto_sync_warns_but_does_not_crash(
 
 
 def test_dispatching_an_agent_against_a_milestone_is_refused(tmp_project, capsys):
-    """No role operates on a brief. Before this, a milestone at SPEC_APPROVED
-    passed the state gate and a worktree named after the file was created."""
+    """No role operates on a brief — and the kind gate must be what says so.
+
+    The brief sits at SPEC_APPROVED, which is exactly the state §1.3 of the
+    spec describes as reachable: frontmatter is text, and a file written before
+    this slice existed carries whatever it was given. That status is one the
+    planner accepts, so `allowed_statuses` lets it through and the kind gate is
+    the only thing left to refuse.
+
+    An earlier version of this test used MILESTONE_ACTIVE, which no role
+    accepts. The state gate refused first, and the assertion "milestone is in
+    the output" was satisfied by the *filename* being echoed — so deleting the
+    kind gate entirely left this test green. Asserting on the gate's own marker
+    is what makes the verdict specific.
+    """
     from scripts.orchestrator import cmd_dispatch_agent
 
-    brief = _write_brief(tmp_project, status="MILESTONE_ACTIVE")
+    brief = _write_brief(tmp_project, status="SPEC_APPROVED")
 
     with pytest.raises(SystemExit) as excinfo:
         cmd_dispatch_agent(
@@ -280,13 +292,17 @@ def test_dispatching_an_agent_against_a_milestone_is_refused(tmp_project, capsys
         )
 
     assert excinfo.value.code == 1
-    assert "milestone" in capsys.readouterr().out.lower()
+    out = capsys.readouterr().out
+    assert "[Kind Gate]" in out, f"a different gate refused the dispatch: {out!r}"
 
 
 def test_a_refused_dispatch_leaves_no_lock_and_no_worktree(tmp_project):
+    """Same SPEC_APPROVED fixture, for the same reason: at MILESTONE_ACTIVE the
+    state gate refuses first, so this would assert nothing about the kind gate's
+    own placement relative to the lock."""
     from scripts.orchestrator import cmd_dispatch_agent
 
-    brief = _write_brief(tmp_project, status="MILESTONE_ACTIVE")
+    brief = _write_brief(tmp_project, status="SPEC_APPROVED")
 
     with pytest.raises(SystemExit):
         cmd_dispatch_agent(

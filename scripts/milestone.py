@@ -317,11 +317,25 @@ def track_entries(text: str) -> list[str]:
 NOT_SPECCED = "not yet specced"
 
 
+def _one_line(value) -> str:
+    """Collapse every whitespace run in `value` to a single space.
+
+    `status` and `title` are read from another document's frontmatter, and YAML
+    admits a newline inside a scalar. The track region is line-structured, so a
+    newline reaching an entry splits it: the tail becomes its own line, the next
+    sync re-renders the now-truncated entry and appends the tail again, and the
+    brief grows by one junk line every run — unbounded, because the auto-sync
+    fires on every slice closure.
+    """
+    return " ".join(str(value).split())
+
+
 def _render_entry(indent: str, slice_id: str, status, title) -> str:
     if status is None:
         return f"{indent}- [ ] {slice_id}{SEPARATOR}{NOT_SPECCED}"
     box = "x" if status == TERMINAL_STATUS[SLICE_KIND] else " "
-    suffix = f"{status} · {title}" if title else status
+    status_text = _one_line(status)
+    suffix = f"{status_text} · {_one_line(title)}" if title else status_text
     return f"{indent}- [{box}] {slice_id}{SEPARATOR}{suffix}"
 
 
