@@ -418,3 +418,104 @@ def test_readme_documents_the_marketplace_installation_route():
     """A source checkout is not an installation, and README used to say it was."""
     assert "marketplace" in README.lower()
     assert "plugin install" in README
+
+
+COMMANDS_DIR = REPO_ROOT / "commands"
+
+
+def command_files():
+    """Every plugin command, sorted so failures name files in a stable order."""
+    return sorted(COMMANDS_DIR.glob("*.md"), key=lambda p: p.name)
+
+
+def command_frontmatter(path):
+    """The command's YAML frontmatter as a flat mapping.
+
+    Deliberately hand-rolled rather than routed through scripts.frontmatter:
+    that module parses *lifecycle documents* and is entitled to assume a
+    `status` field. A command file has none, and a shared parser would grow a
+    branch for a file kind it otherwise knows nothing about.
+    """
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---\n"), f"{path.name} has no frontmatter"
+    _, body = text.split("---\n", 1)
+    block, _, _ = body.partition("\n---\n")
+    fields = {}
+    for line in block.split("\n"):
+        if not line.strip():
+            continue
+        key, sep, value = line.partition(":")
+        assert sep, f"{path.name}: frontmatter line is not `key: value`: {line!r}"
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+def test_every_command_declares_a_description():
+    """The description is what a person sees when choosing a command."""
+    assert command_files(), "no commands were found"
+    for path in command_files():
+        fields = command_frontmatter(path)
+        assert fields.get("description"), f"{path.name} has no description"
+
+
+def test_every_command_that_takes_arguments_hints_them():
+    for path in command_files():
+        body = path.read_text(encoding="utf-8")
+        takes_arguments = "$1" in body or "$ARGUMENTS" in body
+        if takes_arguments:
+            assert "argument-hint" in command_frontmatter(path), (
+                f"{path.name} substitutes arguments but declares no argument-hint"
+            )
+
+
+def test_every_command_reaches_the_orchestrator_through_the_plugin_root():
+    """The whole point of the command layer: nobody computes this path.
+
+    A literal path, a `~`, or a relative traversal would reintroduce exactly
+    the failure this slice removes — and would work on the author's machine.
+    """
+    for path in command_files():
+        body = path.read_text(encoding="utf-8")
+        if "orchestrator.py" not in body:
+            continue
+        assert '"${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py"' in body, (
+            f"{path.name} runs the orchestrator by some other path"
+        )
+        for forbidden in ("~/", "../scripts", "C:\\", "/home/"):
+            assert forbidden not in body, (
+                f"{path.name} contains the non-portable path fragment {forbidden!r}"
+            )
+
+
+def test_every_status_a_command_sets_is_a_real_status():
+    """A typo'd status must fail here, not at the gate in front of the human."""
+    import re
+
+    from scripts.config import DEFAULT_CONFIG
+    from scripts.milestone import MILESTONE_STATUSES
+
+    known = set(DEFAULT_CONFIG["state_machine"]["valid_statuses"]) | set(MILESTONE_STATUSES)
+    found = set()
+    for path in command_files():
+        found |= set(re.findall(r"--status ([A-Z_]+)", path.read_text(encoding="utf-8")))
+    assert found, "no command sets a status"
+    assert found <= known, f"unknown statuses in commands/: {sorted(found - known)}"
+
+
+def test_dispatch_command_lists_exactly_the_configured_roles():
+    """`--role "$1"` is a substitution, so the prose list is the only checkable
+    claim the file makes — and it is the only place a user learns what to pass.
+    """
+    from scripts.config import DEFAULT_CONFIG
+
+    body = (COMMANDS_DIR / "dispatch.md").read_text(encoding="utf-8")
+    line = next(
+        (ln for ln in body.split("\n") if ln.startswith("Configured roles:")),
+        None,
+    )
+    assert line is not None, "dispatch.md does not state which roles exist"
+    listed = {token.strip(" `.") for token in line.split(":", 1)[1].split(",")}
+    assert listed == set(DEFAULT_CONFIG["agents"]), (
+        f"dispatch.md lists {sorted(listed)}, configured roles are "
+        f"{sorted(DEFAULT_CONFIG['agents'])}"
+    )
