@@ -260,6 +260,18 @@ points of the planner and executor roles.
 ### 1. Installation
 
 ```bash
+claude plugin marketplace add ramil-zakirov-dev/superpowers-multiagents
+claude plugin install superpowers-multiagents@ramil-zakirov-dev
+```
+
+The repository is its own marketplace, so the two commands name the same
+project: the first registers it, the second installs the plugin.
+
+To work **on** the plugin rather than with it, clone it and install the Python
+dependencies — this makes the orchestrator runnable as a program, and does not
+install anything into Claude Code:
+
+```bash
 git clone https://github.com/ramil-zakirov-dev/superpowers-multiagents.git
 cd superpowers-multiagents
 pip install -r requirements.txt

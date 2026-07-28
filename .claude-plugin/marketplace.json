@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ramil-zakirov-dev",
+  "description": "Ramil Zakirov's Claude Code plugins",
+  "owner": {
+    "name": "Ramil Zakirov"
+  },
+  "plugins": [
+    {
+      "name": "superpowers-multiagents",
+      "description": "Multi-agent orchestration for Superpowers workflows: a configurable N-level agent hierarchy with supervised background execution and Markdown-frontmatter lifecycle state",
+      "author": {
+        "name": "Ramil Zakirov"
+      },
+      "category": "development",
+      "source": {
+        "source": "github",
+        "repo": "ramil-zakirov-dev/superpowers-multiagents"
+      },
+      "homepage": "https://github.com/ramil-zakirov-dev/superpowers-multiagents"
+    }
+  ]
+}

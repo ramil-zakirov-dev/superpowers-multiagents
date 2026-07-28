@@ -11,6 +11,7 @@ SKILL = (REPO_ROOT / "skills" / "multiagent-orchestrator" / "SKILL.md").read_tex
 CONFIGURATION = (REPO_ROOT / "docs" / "configuration.md").read_text(encoding="utf-8")
 ARCHITECTURE = (REPO_ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
 PLUGIN_MANIFEST = (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+MARKETPLACE = (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
 
 #: Everything this plugin ships to a user's machine.
 SHIPPED_TEXT = {
@@ -19,6 +20,7 @@ SHIPPED_TEXT = {
     "docs/configuration.md": CONFIGURATION,
     "docs/architecture.md": ARCHITECTURE,
     ".claude-plugin/plugin.json": PLUGIN_MANIFEST,
+    ".claude-plugin/marketplace.json": MARKETPLACE,
 }
 
 #: Harness names that documentation has advertised without an adapter ever
@@ -360,3 +362,59 @@ def test_package_json_version_matches_plugin_manifest():
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
     assert plugin["version"] == package["version"] == "2.2.0"
+
+
+#: Categories the official marketplace actually uses. Hardcoded because a test
+#: may not reach the network; this catches a typo like "developement", not a
+#: philosophical disagreement about taxonomy.
+MARKETPLACE_CATEGORIES = frozenset({
+    "automation", "database", "deployment", "design", "development",
+    "learning", "location", "math", "monitoring", "productivity",
+    "security", "testing",
+})
+
+
+def _marketplace():
+    return json.loads(
+        (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+    )
+
+
+def _manifest():
+    return json.loads(
+        (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+
+
+def test_marketplace_entry_matches_the_plugin_manifest():
+    """Two copies of the plugin's identity must not drift apart."""
+    entries = _marketplace()["plugins"]
+    assert len(entries) == 1, "this repository publishes exactly one plugin"
+    entry, manifest = entries[0], _manifest()
+    assert entry["name"] == manifest["name"]
+    assert entry["description"] == manifest["description"]
+
+
+def test_marketplace_source_points_at_the_manifest_repository():
+    """A source pointing somewhere else installs someone else's code."""
+    entry = _marketplace()["plugins"][0]
+    repository = _manifest()["repository"]
+    assert repository.startswith("https://github.com/"), repository
+    expected = repository[len("https://github.com/"):].removesuffix(".git")
+    assert entry["source"] == {"source": "github", "repo": expected}
+
+
+def test_marketplace_category_is_a_real_one():
+    assert _marketplace()["plugins"][0]["category"] in MARKETPLACE_CATEGORIES
+
+
+def test_marketplace_is_not_named_after_the_plugin():
+    """Installation reads `<plugin>@<marketplace>`; equal names read as a typo."""
+    marketplace = _marketplace()
+    assert marketplace["name"] != marketplace["plugins"][0]["name"]
+
+
+def test_readme_documents_the_marketplace_installation_route():
+    """A source checkout is not an installation, and README used to say it was."""
+    assert "marketplace" in README.lower()
+    assert "plugin install" in README
