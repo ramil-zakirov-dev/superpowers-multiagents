@@ -5,6 +5,9 @@ Formats an argv for the OpenCode CLI. The model is passed in the CLI's native
 previously dropped entirely.
 """
 
+import json
+import subprocess
+
 from scripts.adapters.base import HarnessAdapter
 
 
@@ -23,3 +26,34 @@ class OpenCodeAdapter(HarnessAdapter):
             argv.append(str(arg).format(provider=provider, model=model))
         argv.append(task_prompt)
         return argv
+
+    def list_skills(self, agent_config: dict, cwd) -> set[str] | None:
+        """Ask the CLI what it can see. Any failure means "cannot tell".
+
+        `opencode debug skill` prints a JSON array of objects carrying at least
+        a `name`. It makes no model call, so this costs nothing but a few
+        seconds, and it is only ever reached when a role declares skills.
+        """
+        try:
+            result = subprocess.run(
+                ["opencode", "debug", "skill"],
+                cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        try:
+            payload = json.loads(result.stdout)
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+        if not isinstance(payload, list):
+            return None
+
+        return {
+            entry["name"] for entry in payload
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        }

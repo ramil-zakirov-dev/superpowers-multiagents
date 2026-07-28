@@ -23,3 +23,14 @@ class HarnessAdapter:
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement build_command()"
         )
+
+    def list_skills(self, agent_config: dict, cwd) -> set[str] | None:
+        """Skill names this harness can see from `cwd`, or None if unknowable.
+
+        `None` is not an empty set. An empty set means the harness reports no
+        skills at all, so every configured name is missing; `None` means this
+        adapter cannot answer and the caller must stay silent. Conflating them
+        would make every adapter without an implementation warn about every
+        correctly-named skill.
+        """
+        return None
