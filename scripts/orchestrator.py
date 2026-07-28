@@ -76,10 +76,23 @@ def cmd_status(args):
             continue
 
         for filepath in md_files:
-            data = parse_frontmatter(filepath.read_text(encoding="utf-8"))
+            text = filepath.read_text(encoding="utf-8")
+            data = parse_frontmatter(text)
             status = data.get("status", "UNKNOWN")
             title = data.get("title", filepath.stem)
-            print(f"  [{status:<18}] {filepath.name} - {title}")
+            suffix = ""
+            if milestone_mod.document_kind(data) == milestone_mod.MILESTONE_KIND:
+                try:
+                    resolve = milestone_mod.slice_resolver(
+                        milestone_mod.search_dirs_for(filepath), exclude=filepath
+                    )
+                    closed, total = milestone_mod.progress(text, resolve)
+                    suffix = f" ({closed}/{total} slices closed)"
+                except OrchestratorError:
+                    # A brief without markers is still worth listing; a broken
+                    # one must not take the whole report down with it.
+                    suffix = " (track state unavailable)"
+            print(f"  [{status:<18}] {filepath.name} - {title}{suffix}")
         print()
 
 

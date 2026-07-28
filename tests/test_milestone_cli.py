@@ -139,3 +139,31 @@ def test_check_passes_on_a_complete_brief(tmp_path, capsys):
     cmd_milestone(_args("check", file=str(path)))
 
     assert "complete" in capsys.readouterr().out.lower()
+
+
+def test_status_reports_track_progress_for_milestones(tmp_path, capsys):
+    from scripts.orchestrator import cmd_status
+
+    path = _brief(tmp_path, entries="- [ ] slice-01-demo\n- [ ] slice-02-demo\n")
+    _spec(tmp_path, "slice-01-demo", "VERIFIED_CLOSED", "One")
+    _spec(tmp_path, "slice-02-demo", "DRAFT_SPEC", "Two")
+
+    cmd_status(argparse.Namespace(dir=str(tmp_path / "docs" / "superpowers")))
+
+    assert "(1/2 slices closed)" in capsys.readouterr().out
+
+
+def test_status_survives_a_milestone_whose_markers_are_missing(tmp_path, capsys):
+    """A malformed brief must not take down the whole report."""
+    from scripts.orchestrator import cmd_status
+
+    milestones = tmp_path / "docs" / "superpowers" / "milestones"
+    milestones.mkdir(parents=True)
+    (milestones / "broken.md").write_text(
+        '---\nkind: milestone\nstatus: MILESTONE_DRAFT\ntitle: "Broken"\n---\n\n# B\n',
+        encoding="utf-8",
+    )
+
+    cmd_status(argparse.Namespace(dir=str(tmp_path / "docs" / "superpowers")))
+
+    assert "Broken" in capsys.readouterr().out
