@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from scripts.errors import ValidationError
+from scripts.frontmatter import parse_frontmatter
 from scripts.utils import _sanitize_id, atomic_write_text
 
 MILESTONE_KIND = "milestone"
@@ -368,3 +369,62 @@ def unclosed(text: str, resolve) -> list[tuple[str, str]]:
             continue
         open_entries.append((slice_id, status or NOT_SPECCED))
     return open_entries
+
+
+def load(path: Path) -> tuple[dict, str]:
+    """Frontmatter and full text of a brief, refusing any other kind.
+
+    `milestone sync` and `milestone check` operate on one document kind. Left
+    unchecked they would happily treat a slice spec as a brief and report its
+    missing "Problem" section as a milestone defect.
+    """
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    frontmatter = parse_frontmatter(text)
+    if document_kind(frontmatter) != MILESTONE_KIND:
+        raise ValidationError(
+            f"{path} does not declare `kind: {MILESTONE_KIND}`. "
+            f"`milestone` commands operate on milestone briefs only."
+        )
+    return frontmatter, text
+
+
+def search_dirs_for(brief_path: Path) -> list[Path]:
+    """Where a brief's slice ids are resolved: its sibling specs/ and plans/.
+
+    Derived the same way `dependencies._candidate_dirs` derives its siblings,
+    so the dependency gate and the track sync cannot disagree about which
+    files exist.
+    """
+    parent = Path(brief_path).parent
+    dirs = []
+    for sibling in ("plans", "specs"):
+        candidate = parent.parent / sibling
+        if candidate.is_dir():
+            dirs.append(candidate)
+    return dirs
+
+
+def slice_resolver(search_dirs: list[Path], exclude: Path):
+    """A `resolve` over real files: `slice_id -> (status, title)`."""
+    from scripts.dependencies import resolve_document
+
+    def resolve(slice_id: str):
+        found = resolve_document(slice_id, search_dirs, exclude=exclude)
+        if found is None:
+            return None, None
+        data = parse_frontmatter(found.read_text(encoding="utf-8"))
+        return data.get("status", "UNKNOWN"), data.get("title")
+
+    return resolve
+
+
+def sync_file(path: Path) -> tuple[int, int]:
+    """Rewrite a brief's track state in place. Returns `(closed, total)`."""
+    path = Path(path)
+    _frontmatter, text = load(path)
+    resolve = slice_resolver(search_dirs_for(path), exclude=path)
+    updated = sync_text(text, resolve)
+    if updated != text:
+        atomic_write_text(path, updated)
+    return progress(updated, resolve)

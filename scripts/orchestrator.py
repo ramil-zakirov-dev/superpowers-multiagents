@@ -490,6 +490,30 @@ def cmd_milestone(args):
         print(f"  set-status --file {path} --status MILESTONE_ACTIVE")
         return
 
+    if args.action == "sync":
+        try:
+            closed, total = milestone_mod.sync_file(Path(args.file))
+        except OrchestratorError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        print(f"Synced {args.file} — {closed}/{total} slices closed.")
+        return
+
+    if args.action == "check":
+        try:
+            _frontmatter, text = milestone_mod.load(Path(args.file))
+        except OrchestratorError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        missing = milestone_mod.missing_sections(text)
+        if not missing:
+            print(f"{args.file}: complete — all required sections are filled.")
+            return
+        print(f"{args.file} is incomplete. Empty or missing sections:")
+        for section in missing:
+            print(f"   - {section}")
+        sys.exit(1)
+
 
 # ---------------------------------------------------------------------------
 # CLI argument parser
@@ -562,6 +586,12 @@ def main():
     p_ms_new.add_argument(
         "--dir", default="docs/superpowers", help="Base superpowers directory"
     )
+
+    p_ms_sync = milestone_actions.add_parser("sync", help="Refresh track state")
+    p_ms_sync.add_argument("--file", required=True, help="Path to the milestone brief")
+
+    p_ms_check = milestone_actions.add_parser("check", help="Check section completeness")
+    p_ms_check.add_argument("--file", required=True, help="Path to the milestone brief")
 
     args = parser.parse_args()
 
