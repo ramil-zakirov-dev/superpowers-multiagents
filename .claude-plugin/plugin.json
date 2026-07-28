@@ -1,7 +1,7 @@
 {
   "name": "superpowers-multiagents",
   "description": "Multi-agent orchestration for Superpowers workflows: a configurable N-level agent hierarchy with supervised background execution and Markdown-frontmatter lifecycle state",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "author": {
     "name": "Ramil Zakirov"
   },

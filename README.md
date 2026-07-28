@@ -111,6 +111,22 @@ The lifecycle of every feature slice is tracked transparently inside Markdown **
 | `FAILED` | **Orchestrator** | Set by the orchestrator when the agent exits non-zero. |
 | `VERIFIED_CLOSED` | **Opus 5 Gate** | Opus 5 audits `git diff` and marks slice closed. |
 
+### Milestone lifecycle
+
+A milestone brief is a second document kind, declared by `kind: milestone`. A
+document that declares none is a slice, so nothing existing changes.
+
+| State | Responsible | Action / Gate |
+| :--- | :--- | :--- |
+| `MILESTONE_DRAFT` | **Agent 1** | Writing the brief. |
+| `MILESTONE_ACTIVE` | **Human Gate** | Approved — refused while any required section is empty. |
+| `MILESTONE_CLOSED` | **Human Gate** | The objective was met — refused while any listed slice is open. |
+
+No agent is ever dispatched against a brief, so there is no `FAILED` here and no
+branch to merge. Track checkboxes are derived from the real statuses of the
+slices a track lists; closing a slice refreshes them in the same command. See
+[docs/configuration.md](docs/configuration.md#milestone-briefs).
+
 ---
 
 ## 🔌 Generic Project Infrastructure Hooks
@@ -279,7 +295,19 @@ The same absolute-path form works for every command below — `dispatch-agent`,
 `set-status`, `trigger-hook`, `summary` — not just `status`; it's shown once
 here for brevity.
 
-### 3. Dispatch Agent (Generic)
+### 3. Start a Milestone
+
+```bash
+python "/abs/path/to/plugin/scripts/orchestrator.py" milestone new --id milestone-1 --title "Intake automation"
+```
+
+Fill every section of the generated brief, then approve it:
+
+```bash
+python "/abs/path/to/plugin/scripts/orchestrator.py" set-status --file docs/superpowers/milestones/<file>.md --status MILESTONE_ACTIVE
+```
+
+### 4. Dispatch Agent (Generic)
 
 ```bash
 # Dispatch any configured agent by role:
@@ -289,14 +317,14 @@ python -m scripts.orchestrator dispatch-agent --role planner --file docs/superpo
 python -m scripts.orchestrator dispatch-agent --role executor --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --model claude-sonnet-4
 ```
 
-### 4. Legacy Aliases (Backward Compatible)
+### 5. Legacy Aliases (Backward Compatible)
 
 ```bash
 python -m scripts.orchestrator dispatch-planner --spec docs/superpowers/specs/2026-07-25-slice-01-auth-design.md
 python -m scripts.orchestrator dispatch-executor --plan docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md
 ```
 
-### 5. Set Status & Trigger Hooks
+### 6. Set Status & Trigger Hooks
 
 ```bash
 python -m scripts.orchestrator set-status --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --status PLAN_APPROVED

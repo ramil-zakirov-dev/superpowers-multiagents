@@ -120,6 +120,59 @@ for OpenCode, declare the plugin in `opencode.json`:
 If your harness has no equivalent, override `prompt_template` for each role with
 a prompt that spells out the discipline you want instead of naming a skill.
 
+## Milestone briefs
+
+A milestone brief is a **milestone brief in PRD form** — it borrows the PRD
+section names because they carry a dense prior for the LLM that writes and reads
+them. It is not a product-management PRD: `Track decomposition` is this
+plugin's, not PRD's.
+
+Create one with `milestone new`; the template carries every section with its
+prompt written as an HTML comment, so an untouched section reads as empty.
+
+These eight sections are required, and `MILESTONE_DRAFT → MILESTONE_ACTIVE` is
+refused while any of them is empty:
+
+| Section | What belongs in it |
+| :--- | :--- |
+| `Problem` | Whose pain, and why now. Include what exists today and why it is insufficient. |
+| `Users` | Who, in which roles. For internal infrastructure, name the engineering roles and say so in one line. |
+| `Goals` | What becomes true when the milestone is met. |
+| `Non-goals` | Two groups: **Not in this milestone** (sequencing) and **Rejected outright** (a lasting stance). |
+| `Success metrics` | One row per goal: `Goal` and `How we will know`. |
+| `Constraints & invariants` | What must not be violated. |
+| `Track decomposition` | Why this decomposition, then a track per subsystem with `depends_on:`. |
+| `Open questions` | What is unresolved, and who decides. |
+
+A section counts as filled when it holds at least one line that is not blank,
+not a heading, and not part of an HTML comment. The check observes presence, not
+quality — `Success metrics` in particular can be satisfied by a sentence that
+measures nothing.
+
+Content ends at the next heading of any level. Inside `Track decomposition` the
+tracks are `###` headings, so only the decomposition rationale written above
+them satisfies that section.
+
+### The track region
+
+```markdown
+## Track decomposition
+
+Split by ownership boundary: intake is gateway-shaped, billing is ledger-shaped.
+
+<!-- tracks:begin -->
+### track-1: Intake
+depends_on: —
+- [ ] slice-01-gateway — not yet specced
+- [x] slice-02-native-sandbox — VERIFIED_CLOSED · Native sandbox
+<!-- tracks:end -->
+```
+
+You own the `slice_id`, the track headings, the `depends_on:` lines and any
+prose. The orchestrator owns the checkbox and everything after the ` — `
+separator, and rewrites nothing outside the markers. Naming a slice whose spec
+does not exist yet is expected — it renders `not yet specced`.
+
 ## Adding Custom Agents
 
 Add any role to the `agents` section. Declare `success_status` alongside

@@ -16,6 +16,7 @@ scripts/
 ├── hooks.py                 # Infrastructure hook loading & execution
 ├── locks.py                 # File-based slice locking (concurrency control)
 ├── dependencies.py          # Slice dependency checking
+├── milestone.py             # Milestone brief kind: fixed lifecycle, section check, track sync
 ├── utils.py                 # ID validation, YAML conversion, project root
 └── adapters/
     ├── __init__.py           # Public adapter API
@@ -214,3 +215,47 @@ DRAFT_SPEC → SPEC_APPROVED → PLANNING → PLAN_GENERATED → PLAN_APPROVED �
 ```
 
 `FAILED` is set by the orchestrator, from the dispatched agent's exit code, never by the agent itself. It returns the slice to the gate it came from — `PLANNING → FAILED → SPEC_APPROVED`, `EXECUTING → FAILED → PLAN_APPROVED` — so a crashed or misbehaving agent never strands a slice.
+
+## The milestone lifecycle
+
+A milestone brief is the orchestrator's second document kind, declared by
+`kind: milestone` in its frontmatter. A document that declares no kind is a
+slice, which is what makes the field opt-in rather than a migration.
+
+```
+MILESTONE_DRAFT ⇄ MILESTONE_ACTIVE → MILESTONE_CLOSED
+```
+
+| Transition | Gate |
+| :--- | :--- |
+| `DRAFT → ACTIVE` | Every required section present and non-empty |
+| `ACTIVE → DRAFT` | None |
+| `ACTIVE → CLOSED` | Every slice listed in every track is `VERIFIED_CLOSED` |
+
+There is no `FAILED`: no agent is dispatched against a milestone, so there is no
+exit code to derive a terminal status from. There is no merge either — a
+milestone owns no branch, and `set-status` never reaches
+`merge_and_cleanup_worktree` for one.
+
+**This state machine is fixed and deliberately not configurable.** Both of its
+gates are keyed to these exact status names, so a project that renamed
+`MILESTONE_CLOSED` would silently detach the gate from the transition. The slice
+machine demonstrates the hazard it avoids: it is advertised as configurable
+while `cmd_set_status` compares against the literal `"VERIFIED_CLOSED"`.
+
+`MILESTONE_CLOSED` is always a human decision. The gate refuses a premature
+close; it never performs one. "Every slice shipped" and "the objective was met"
+are different claims.
+
+### Track state is derived, never hand-ticked
+
+A track lists its slices by `slice_id` inside a machine-owned region delimited
+by `<!-- tracks:begin -->` and `<!-- tracks:end -->`. The brief owns membership;
+the slice files own status. That direction is required by what a milestone is —
+a planning document must be able to name slices that do not exist yet, which
+the opposite arrangement (slices declaring a `track_id`) cannot express.
+
+Closing a slice re-syncs every brief that lists it in the same command, so a
+checkbox cannot go stale. A failure to re-sync is reported as a warning and does
+not overturn the close, for the same reason a failing `on_slice_verified_closed`
+hook does not: the outcome was already recorded.

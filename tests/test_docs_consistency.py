@@ -55,7 +55,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.1.0"
+    assert manifest["version"] == "2.2.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -80,14 +80,6 @@ def test_manifest_urls_are_resolvable_and_consistent():
         f"repository URL is not owner/name shaped: {repository}"
     )
     assert repository in README, "README does not point at the manifest's repository"
-
-
-def test_package_json_version_matches_plugin_manifest():
-    plugin = json.loads(
-        (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
-    )
-    package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.1.0"
 
 
 def test_requirements_declare_the_test_dependency():
@@ -296,3 +288,61 @@ def test_hook_ordering_change_is_recorded():
     documented = ARCHITECTURE + CONFIGURATION + README
     assert "2.1.0" in documented
     assert "after" in ARCHITECTURE and "worktree" in ARCHITECTURE
+
+
+def test_every_milestone_status_is_documented():
+    from scripts.milestone import MILESTONE_STATUSES
+
+    documented = README + CONFIGURATION + ARCHITECTURE + SKILL
+    for status in MILESTONE_STATUSES:
+        assert status in documented, f"milestone status '{status}' is undocumented"
+
+
+def test_every_milestone_subcommand_is_documented():
+    for action in ("milestone new", "milestone sync", "milestone check"):
+        assert action in SKILL, f"'{action}' is not shown in SKILL.md"
+
+
+def test_the_documented_required_sections_match_the_code():
+    """A brief's shape is a contract; two copies of it must not drift."""
+    from scripts.milestone import REQUIRED_SECTIONS
+
+    for section in REQUIRED_SECTIONS:
+        assert section in CONFIGURATION, (
+            f"required section '{section}' is enforced by the code but appears "
+            f"nowhere in docs/configuration.md"
+        )
+
+
+def test_the_track_markers_are_documented_verbatim():
+    from scripts.milestone import TRACKS_BEGIN, TRACKS_END
+
+    assert TRACKS_BEGIN in CONFIGURATION and TRACKS_END in CONFIGURATION
+
+
+def test_the_sandbox_flags_first_warning_is_not_copied_onto_milestone():
+    """That constraint exists only because `sandbox exec --` needs REMAINDER."""
+    for line in SKILL.split("\n"):
+        if "must precede the action" in line.lower():
+            assert "sandbox" in line.lower(), (
+                "the flags-first warning was generalised beyond sandbox; "
+                "milestone subcommands take flags after the action"
+            )
+
+
+def test_the_milestone_lifecycle_is_documented_as_fixed():
+    assert "not configurable" in ARCHITECTURE.lower()
+
+
+def test_the_operating_procedure_states_who_decides():
+    """The distinction the section exists for: the human decides, never types."""
+    assert "Operating procedure" in SKILL
+    assert "decides" in SKILL
+
+
+def test_package_json_version_matches_plugin_manifest():
+    plugin = json.loads(
+        (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+    assert plugin["version"] == package["version"] == "2.2.0"
