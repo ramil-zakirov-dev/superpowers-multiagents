@@ -389,6 +389,31 @@ def load(path: Path) -> tuple[dict, str]:
     return frontmatter, text
 
 
+def briefs_listing(slice_id: str, start_path: Path) -> list[Path]:
+    """Milestone briefs whose track region lists `slice_id`.
+
+    Resolved from the closing document's own location the same way
+    `search_dirs_for` resolves siblings, so a project laid out differently
+    still finds its milestones. A brief that cannot be read — wrong kind,
+    missing markers — is skipped rather than raising: discovery must not be
+    able to fail a slice's closure.
+    """
+    milestones_dir = Path(start_path).parent.parent / MILESTONES_DIRNAME
+    if not milestones_dir.is_dir():
+        return []
+
+    listing = []
+    for candidate in sorted(milestones_dir.glob("*.md")):
+        try:
+            _frontmatter, text = load(candidate)
+            entries = track_entries(text)
+        except (OSError, ValidationError):
+            continue
+        if slice_id in entries:
+            listing.append(candidate)
+    return listing
+
+
 def search_dirs_for(brief_path: Path) -> list[Path]:
     """Where a brief's slice ids are resolved: its sibling specs/ and plans/.
 

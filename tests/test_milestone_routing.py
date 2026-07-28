@@ -1,14 +1,52 @@
 import argparse
+import subprocess
 
 import pytest
 
 from scripts import milestone
 from scripts.frontmatter import parse_frontmatter
+from scripts.git_ops import create_git_worktree
 from scripts.orchestrator import cmd_set_status
 
 
 def _args(file, status):
     return argparse.Namespace(file=str(file), status=status)
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=True)
+
+
+def _closeable_slice(tmp_project, slice_id="slice-01-demo", title="Demo"):
+    """A plan at EXECUTION_COMPLETE with a real, mergeable branch behind it.
+
+    `set-status --status VERIFIED_CLOSED` runs an actual
+    `git merge feat/<slice_id>` (`git_ops.merge_and_cleanup_worktree`). Without
+    the branch, the merge fails, the slice lands in MERGE_CONFLICT, and the
+    command exits *before* the auto-sync ever runs — so a test written without
+    this fixture goes red for a reason that has nothing to do with what it
+    tests, and the obvious "fix" is to move the auto-sync earlier, which would
+    be wrong. Mirrors the setup in `tests/test_set_status.py`.
+
+    Call this AFTER writing the brief: it commits the whole tree, and the merge
+    refuses to run against a dirty one.
+    """
+    plans = tmp_project / "docs" / "superpowers" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    plan_file = plans / f"2026-07-28-{slice_id}-plan.md"
+    plan_file.write_text(
+        f'---\nslice_id: "{slice_id}"\ntitle: "{title}"\n'
+        f"status: EXECUTION_COMPLETE\n---\n\n# Plan\n",
+        encoding="utf-8",
+    )
+    _git(tmp_project, "add", "-A")
+    _git(tmp_project, "commit", "-qm", "fixture")
+
+    worktree = create_git_worktree(slice_id, tmp_project)
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-qm", "feat: work")
+    return plan_file
 
 
 def _write_brief(tmp_project, status="MILESTONE_DRAFT", filled=True, entries=""):
@@ -135,3 +173,53 @@ def test_a_file_in_milestones_without_the_kind_field_is_refused(tmp_project, cap
         cmd_set_status(_args(path, "SPEC_APPROVED"))
 
     assert "kind: milestone" in capsys.readouterr().out
+
+
+def test_closing_a_slice_ticks_it_in_every_brief_that_lists_it(tmp_project):
+    """Closing a slice and updating the milestone are one command.
+
+    A checkbox therefore cannot go stale, and nobody has to remember a step.
+    """
+    brief = _write_brief(
+        tmp_project, status="MILESTONE_ACTIVE", entries="- [ ] slice-01-demo\n"
+    )
+    plan_file = _closeable_slice(tmp_project)
+
+    cmd_set_status(_args(plan_file, "VERIFIED_CLOSED"))
+
+    assert _status_of(plan_file) == "VERIFIED_CLOSED", "the merge must have succeeded"
+    assert "- [x] slice-01-demo" in brief.read_text(encoding="utf-8")
+
+
+def test_a_brief_that_does_not_list_the_slice_is_untouched(tmp_project):
+    brief = _write_brief(
+        tmp_project, status="MILESTONE_ACTIVE", entries="- [ ] slice-99-other\n"
+    )
+    plan_file = _closeable_slice(tmp_project)
+    before = brief.read_bytes()
+
+    cmd_set_status(_args(plan_file, "VERIFIED_CLOSED"))
+
+    assert _status_of(plan_file) == "VERIFIED_CLOSED"
+    assert brief.read_bytes() == before
+
+
+def test_a_failing_auto_sync_warns_but_does_not_reopen_the_slice(
+    tmp_project, monkeypatch, capsys
+):
+    """The close was already recorded. A later step must not unrecord it."""
+    from scripts import milestone as milestone_module
+    from scripts.errors import ValidationError
+
+    _write_brief(tmp_project, status="MILESTONE_ACTIVE", entries="- [ ] slice-01-demo\n")
+    plan_file = _closeable_slice(tmp_project)
+
+    def boom(_path):
+        raise ValidationError("markers missing")
+
+    monkeypatch.setattr(milestone_module, "sync_file", boom)
+
+    cmd_set_status(_args(plan_file, "VERIFIED_CLOSED"))
+
+    assert _status_of(plan_file) == "VERIFIED_CLOSED"
+    assert "Warning" in capsys.readouterr().out

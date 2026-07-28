@@ -187,6 +187,17 @@ def cmd_set_status(args):
     if not update_frontmatter_status(filepath, "VERIFIED_CLOSED", valid_statuses, transitions):
         sys.exit(1)
 
+    # Closing a slice and refreshing the milestones that list it are one
+    # command, so a checkbox cannot go stale. A sync failure is a warning: the
+    # slice's outcome is already recorded, and a later step must not overturn
+    # it -- the same rule the hook and the sandbox teardown below follow.
+    for brief in milestone_mod.briefs_listing(slice_id, filepath):
+        try:
+            milestone_mod.sync_file(brief)
+            print(f"Refreshed {brief.name}.")
+        except OrchestratorError as exc:
+            print(f"Warning: could not refresh {brief.name}: {exc}")
+
     try:
         run_infrastructure_hook(
             "on_slice_verified_closed",
