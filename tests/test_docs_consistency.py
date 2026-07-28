@@ -540,3 +540,67 @@ def test_new_milestone_declares_the_tools_its_pipeline_needs():
     tools = command_frontmatter(COMMANDS_DIR / "new-milestone.md")["allowed-tools"]
     for tool in ("Bash(python:*)", "Bash(echo:*)", "Bash(cut:*)"):
         assert tool in tools, f"new-milestone does not declare {tool}"
+
+
+COMMAND_PREFIX = "/superpowers-multiagents:"
+
+
+def procedure_action_cells():
+    """The third column of every data row of the Operating procedure table.
+
+    The table is found by its header row rather than by line number so that
+    editing the prose above it does not silently empty this list.
+    """
+    lines = SKILL.split("\n")
+    header = "| When | Who decides | Run this |"
+    assert header in lines, "the Operating procedure table header has changed"
+    start = lines.index(header) + 2  # skip the header and the `| :--- |` row
+    cells = []
+    for line in lines[start:]:
+        if not line.startswith("|"):
+            break
+        cells.append([part.strip() for part in line.strip("|").split("|")][2])
+    assert cells, "the Operating procedure table has no rows"
+    return cells
+
+
+def test_every_procedure_row_is_a_command_or_a_supervisor_note():
+    """A row that is neither is a row someone must hand-assemble to run.
+
+    Eight rows used to carry a bare subcommand: not runnable until the reader
+    prepended `python` and a path the skill asks the model to derive. This
+    assertion is positive on purpose — checking for the *absence* of subcommand
+    names is defeated by `status` being a substring of `--status`.
+    """
+    for cell in procedure_action_cells():
+        is_command = cell.startswith(f"`{COMMAND_PREFIX}")
+        is_note = cell.startswith("(")
+        assert is_command or is_note, (
+            f"procedure row action is neither a command nor a note: {cell!r}"
+        )
+
+
+def test_every_procedure_command_exists_as_a_file():
+    named = set()
+    for cell in procedure_action_cells():
+        if not cell.startswith(f"`{COMMAND_PREFIX}"):
+            continue
+        named.add(cell.strip("`").removeprefix(COMMAND_PREFIX).split()[0])
+    assert named, "the procedure table names no commands"
+    for name in sorted(named):
+        assert (COMMANDS_DIR / f"{name}.md").exists(), (
+            f"the procedure names {COMMAND_PREFIX}{name}, which has no file"
+        )
+
+
+def test_every_command_file_is_named_by_the_procedure():
+    """The reverse direction. A command nobody is told to run is dead weight."""
+    named = set()
+    for cell in procedure_action_cells():
+        if cell.startswith(f"`{COMMAND_PREFIX}"):
+            named.add(cell.strip("`").removeprefix(COMMAND_PREFIX).split()[0])
+    on_disk = {path.stem for path in command_files()}
+    # `status` reads state and belongs to no transition, so no row names it.
+    assert on_disk - named == {"status"}, (
+        f"commands not named by any procedure row: {sorted(on_disk - named - {'status'})}"
+    )

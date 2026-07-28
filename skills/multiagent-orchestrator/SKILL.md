@@ -161,21 +161,42 @@ keystroke is the goal; automating the judgement would dissolve the gate.
 
 | When | Who decides | Run this |
 | :--- | :--- | :--- |
-| A milestone is agreed on | Human | `milestone new --id <id> --title "<title>"` |
-| The brief is written | Human approves | `set-status --file <brief> --status MILESTONE_ACTIVE` |
-| A slice spec is drafted | Human approves | `set-status --file <spec> --status SPEC_APPROVED` |
-| Spec approved | Observable | `dispatch-agent --role planner --file <spec>` |
+| A milestone is agreed on | Human | `/superpowers-multiagents:new-milestone <id> <title>` |
+| The brief is written | Human approves | `/superpowers-multiagents:activate-milestone <brief>` |
+| A slice spec is drafted | Human approves | `/superpowers-multiagents:approve-spec <spec>` |
+| Spec approved | Observable | `/superpowers-multiagents:dispatch planner <spec>` |
 | Planner exited 0 | Observable | (the supervisor sets `PLAN_GENERATED`) |
-| The plan is audited | Human approves | `set-status --file <plan> --status PLAN_APPROVED` |
-| Plan approved | Observable | `dispatch-agent --role executor --file <plan>` |
+| The plan is audited | Human approves | `/superpowers-multiagents:approve-plan <plan>` |
+| Plan approved | Observable | `/superpowers-multiagents:dispatch executor <plan>` |
 | Executor exited 0 | Observable | (the supervisor sets `EXECUTION_COMPLETE`) |
-| The diff is audited | Human approves | `set-status --file <plan> --status VERIFIED_CLOSED` |
+| The diff is audited | Human approves | `/superpowers-multiagents:close-slice <plan>` |
 | A slice closed | Observable | (the same command re-syncs every brief listing it) |
-| Every track is complete | Human approves | `set-status --file <brief> --status MILESTONE_CLOSED` |
+| Every track is complete | Human approves | `/superpowers-multiagents:close-milestone <brief>` |
 
 `EXECUTION_COMPLETE` means the executor's process ended cleanly, not that the
 plan is finished — read the plan's unchecked task boxes before approving
 `VERIFIED_CLOSED`.
+
+### The command surface
+
+These commands ship with the plugin and are available once it is installed.
+They wrap the CLI documented above; the orchestrator path inside them is
+expanded by the harness, so nothing derives it.
+
+| Command | Effect |
+| :--- | :--- |
+| `/superpowers-multiagents:status` | Read the state of every milestone, spec and plan |
+| `/superpowers-multiagents:new-milestone <id> <title>` | Create a milestone brief |
+| `/superpowers-multiagents:activate-milestone <brief>` | `MILESTONE_DRAFT` → `MILESTONE_ACTIVE` |
+| `/superpowers-multiagents:approve-spec <spec>` | `DRAFT_SPEC` → `SPEC_APPROVED` |
+| `/superpowers-multiagents:approve-plan <plan>` | `PLAN_GENERATED` → `PLAN_APPROVED` |
+| `/superpowers-multiagents:close-slice <plan>` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
+| `/superpowers-multiagents:close-milestone <brief>` | `MILESTONE_ACTIVE` → `MILESTONE_CLOSED` |
+| `/superpowers-multiagents:dispatch <role> <file>` | Dispatch a configured agent role |
+
+`milestone sync`, `milestone check`, `summary`, `trigger-hook` and `sandbox`
+have no commands: they are not steps of the procedure. Run them through the CLI
+above.
 
 ### Milestone brief commands
 
