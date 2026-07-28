@@ -355,6 +355,8 @@ python -m scripts.orchestrator trigger-hook --event on_slice_executor_start --di
 
 ## 🧠 Skills Worth Giving Your Agents
 
+![Skills Worth Giving Your Agents](assets/skills-banner.png)
+
 This plugin routes work between agents. It does not make any of them think
 better. That comes from **skills** — Markdown instruction files the harness
 discovers by directory and the model loads on demand. Once a role names them
