@@ -2,7 +2,14 @@
 
 from pathlib import Path
 
+from scripts.errors import ValidationError
 from scripts.frontmatter import parse_frontmatter
+from scripts.milestone import is_closed
+
+#: Directory names in the order a matching document is preferred. A slice's
+#: spec and its plan carry the same `slice_id`; the terminal status lands on
+#: the plan, so the plan answers "is this closed?".
+DIRECTORY_PRIORITY = ("plans", "specs", "milestones")
 
 
 def _candidate_dirs(spec_file: Path) -> list[Path]:
@@ -16,28 +23,54 @@ def _candidate_dirs(spec_file: Path) -> list[Path]:
     return dirs
 
 
-def _resolve(dep_id: str, search_dirs: list[Path], exclude: Path) -> tuple[list[Path], list[Path]]:
-    """Return (matches by slice_id, matches by filename stem)."""
+def _matches(dep_id: str, search_dirs: list[Path], exclude: Path) -> list[Path]:
+    """Files matching `dep_id`, by frontmatter `slice_id` first, stem second."""
     by_slice_id: list[Path] = []
     by_stem: list[Path] = []
     for directory in search_dirs:
-        for candidate in sorted(directory.glob("*.md")):
-            if candidate.resolve() == exclude.resolve():
+        if not Path(directory).is_dir():
+            continue
+        for candidate in sorted(Path(directory).glob("*.md")):
+            if candidate.resolve() == Path(exclude).resolve():
                 continue
             frontmatter = parse_frontmatter(candidate.read_text(encoding="utf-8"))
             if frontmatter.get("slice_id") == dep_id:
                 by_slice_id.append(candidate)
             elif dep_id in candidate.stem:
                 by_stem.append(candidate)
-    return by_slice_id, by_stem
+    return by_slice_id or by_stem
+
+
+def resolve_document(dep_id: str, search_dirs: list[Path], exclude: Path) -> Path | None:
+    """The single document `dep_id` names, or None when nothing matches.
+
+    A frontmatter `slice_id` match always wins over a filename match. Among
+    equally good matches, `DIRECTORY_PRIORITY` decides — that is what keeps a
+    slice's spec and plan from reading as a conflict. Two matches inside the
+    same priority group are a real ambiguity and raise, because silently
+    picking one is how a dependency gate stops meaning anything.
+    """
+    matches = _matches(dep_id, search_dirs, exclude)
+    if not matches:
+        return None
+
+    for group in DIRECTORY_PRIORITY:
+        in_group = [m for m in matches if m.parent.name == group]
+        if in_group:
+            matches = in_group
+            break
+
+    if len(matches) > 1:
+        names = sorted(match.name for match in matches)
+        raise ValidationError(f"'{dep_id}' is ambiguous: matches {names}")
+    return matches[0]
 
 
 def check_unmet_dependencies(spec_file: Path, search_dirs: list[Path] | None = None) -> list:
-    """List dependencies of a slice that are not yet VERIFIED_CLOSED.
+    """List dependencies of a slice that are not yet closed.
 
-    A frontmatter `slice_id` match always wins over a filename match. Several
-    equally good candidates are reported as ambiguous rather than guessed —
-    silently picking one is how a dependency gate stops meaning anything.
+    "Closed" is asked of the resolved document's own kind: `VERIFIED_CLOSED`
+    for a slice, `MILESTONE_CLOSED` for a milestone.
     """
     spec_file = Path(spec_file)
     if not spec_file.exists():
@@ -54,21 +87,18 @@ def check_unmet_dependencies(spec_file: Path, search_dirs: list[Path] | None = N
 
     unmet = []
     for dep_id in depends_on:
-        by_slice_id, by_stem = _resolve(dep_id, dirs, exclude=spec_file)
-        matches = by_slice_id or by_stem
+        try:
+            resolved = resolve_document(dep_id, dirs, exclude=spec_file)
+        except ValidationError as exc:
+            unmet.append(str(exc))
+            continue
 
-        if not matches:
+        if resolved is None:
             unmet.append(f"{dep_id} (spec not found in {[str(d) for d in dirs]})")
             continue
-        if len(matches) > 1:
-            names = sorted(match.name for match in matches)
-            unmet.append(f"{dep_id} (ambiguous: matches {names})")
-            continue
 
-        dep_status = parse_frontmatter(matches[0].read_text(encoding="utf-8")).get(
-            "status", "UNKNOWN"
-        )
-        if dep_status != "VERIFIED_CLOSED":
-            unmet.append(f"{dep_id} (status: {dep_status})")
+        dep_frontmatter = parse_frontmatter(resolved.read_text(encoding="utf-8"))
+        if not is_closed(dep_frontmatter):
+            unmet.append(f"{dep_id} (status: {dep_frontmatter.get('status', 'UNKNOWN')})")
 
     return unmet
