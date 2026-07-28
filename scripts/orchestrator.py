@@ -29,6 +29,7 @@ from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
 from scripts import milestone as milestone_mod
 from scripts import sandbox
+from scripts import skills as skills_mod
 from scripts.utils import find_project_root
 
 #: Root of this plugin — the supervisor is spawned with this as its cwd so
@@ -48,6 +49,24 @@ def _warn_if_artifacts_not_ignored(project_root: Path) -> None:
         print(
             "Hint: consider adding these to .gitignore so they stay out of your diffs: "
             + " ".join(missing)
+        )
+
+
+def _warn_if_invisible_skills(agent_config: dict, adapter, cwd: Path) -> None:
+    """Say so when a configured skill is not visible to the harness.
+
+    Advisory only: skills are reinforcement, not a dependency, so a name the
+    harness cannot resolve must not turn an optional improvement into a new way
+    for a dispatch to be blocked.
+    """
+    declared = skills_mod.declared_skills(agent_config)
+    if not declared:
+        return
+    missing = skills_mod.invisible_skills(declared, adapter.list_skills(agent_config, cwd))
+    if missing:
+        print(
+            "Hint: these skills are not visible to the harness and will have "
+            "no effect: " + " ".join(missing)
         )
 
 
@@ -326,7 +345,10 @@ def cmd_dispatch_agent(args):
     # strand the slice at in_progress_status with no legal way back.
     log_file = log_path(project_root, role, target_file.stem)
     prompt_template = agent_config.get("prompt_template", "Process {file}")
-    task_prompt = prompt_template.format(file=target_file)
+    task_prompt = skills_mod.compose_prompt(
+        prompt_template.format(file=target_file),
+        skills_mod.declared_skills(agent_config),
+    )
 
     isolated = agent_config.get("isolated_worktree", False)
     try:
@@ -414,6 +436,7 @@ def cmd_dispatch_agent(args):
 
     print(f"Dispatched {agent_config.get('model')} as {role} (supervisor PID {process.pid}).")
     print(f"Log: {log_file}")
+    _warn_if_invisible_skills(agent_config, adapter, cwd)
     _warn_if_artifacts_not_ignored(project_root)
 
 
