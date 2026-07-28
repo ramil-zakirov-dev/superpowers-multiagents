@@ -295,7 +295,9 @@ Separately — for a harness that already has the skills you want — a role can
 name them via the `skills` list under `agents.<role>` in
 `.superpowers/agents.yaml`. The names are appended to the rendered prompt as
 reinforcement, not a replacement for `prompt_template`. See
-[docs/configuration.md](docs/configuration.md#skills-per-role-reinforcement).
+[docs/configuration.md](docs/configuration.md#skills-per-role-reinforcement) for
+the schema, and **[Skills Worth Giving Your Agents](#-skills-worth-giving-your-agents)**
+below for which skills to install and where to find them.
 
 ### 2. Check Workflow Status
 
@@ -348,6 +350,103 @@ python -m scripts.orchestrator dispatch-executor --plan docs/superpowers/plans/2
 python -m scripts.orchestrator set-status --file docs/superpowers/plans/2026-07-25-slice-01-auth-plan.md --status PLAN_APPROVED
 python -m scripts.orchestrator trigger-hook --event on_slice_executor_start --dir .
 ```
+
+---
+
+## 🧠 Skills Worth Giving Your Agents
+
+This plugin routes work between agents. It does not make any of them think
+better. That comes from **skills** — Markdown instruction files the harness
+discovers by directory and the model loads on demand. Once a role names them
+under `skills:`, every dispatch of that role carries them.
+
+### The selection rule: take lenses, not pipelines
+
+The single mistake worth avoiding. A skill that offers a **way to think** —
+Dependency Rule, bounded contexts, stability patterns — *composes* with this
+plugin. A skill that offers its **own route from work to release** (`to-spec`,
+`to-tickets`, `implement`, `tdd`, `wayfinder`) *competes* with the state machine
+you already run, and when both are active the model picks one silently and never
+tells you.
+
+> **Rule of thumb.** If a skill's description contains a workflow, you already
+> have one. If it contains a vocabulary, you probably want it.
+
+### Where to get them
+
+| Source | What it is | Best for |
+|---|---|---|
+| **[wondelai/skills](https://github.com/wondelai/skills)** | 62 skills distilled from well-known books — Clean Architecture, DDD, Refactoring, Release It!, Design of Everyday Things. Pure Markdown, MIT, **zero executable files**. Each is a ~200-line `SKILL.md` plus `references/` loaded only on demand. | Exactly the lens shape described above. Start here. |
+| **[skills.sh](https://www.skills.sh/)** | The hub and the `npx skills` CLI: search across published repositories, install per skill, target any of 70+ agents (`claude-code`, `opencode`, `codex`, `cursor`, …). | Discovery, and the one install path that works for both harnesses at once. |
+
+### Install
+
+Globally, for both harnesses, in one command — repeat `-s` per skill, because
+the CLI does not parse a comma list and silently matches nothing if you use one:
+
+```bash
+npx skills add wondelai/skills -s clean-architecture -s domain-driven-design -s clean-code -s refactoring-patterns -a claude-code -a opencode -g -y --copy
+```
+
+Browse before committing to anything:
+
+```bash
+npx skills find --owner wondelai
+```
+
+| Flag | Why it matters |
+|---|---|
+| `--copy` | **Required in practice.** The default symlinks break on Windows and inside git worktrees. |
+| `-g` / `-p` | `-g` installs per user (`~/.claude/skills/`, `~/.agents/skills/`) and is visible from any working directory — including an executor's isolated worktree. `-p` installs into the repository and writes a `skills-lock.json` pinning every skill by SHA-256, but then the files **must be committed**: `git worktree add` populates a worktree with tracked files only. |
+| `-a` | Name each harness you dispatch to. At project scope one directory serves both; globally they use different ones. |
+| `--all` | **Don't.** A skill is an instruction that overrides model behaviour — installing a catalogue unread is running unread code, and every description sits in context for the rest of the session. |
+
+wondelai also publishes a Claude Code marketplace (`/plugin marketplace add
+wondelai/skills`), but its collections are coarse: `ux-design` brings eleven
+skills, `systems-architecture` six. Per-skill installation is what lets you take
+two and leave the rest.
+
+### Wire them to roles
+
+```yaml
+# .superpowers/agents.yaml — requires plugin >= 2.4.0
+agents:
+  planner:
+    skills: [clean-architecture, domain-driven-design]
+  executor:
+    skills: [clean-code, refactoring-patterns]
+```
+
+`skills` is the only key set here, so `model`, `harness` and — importantly —
+`prompt_template` keep coming from the plugin's defaults and keep improving with
+it. Two per role is a good ceiling; a longer list dilutes attention rather than
+sharpening it.
+
+Which lens suits which role:
+
+| Role | Lenses | Why |
+|---|---|---|
+| `planner` | `clean-architecture`, `domain-driven-design` | It decides which layer code belongs to and what the domain calls it — the decisions most expensive to undo later. |
+| `executor` | `clean-code`, `refactoring-patterns` | Craft at the code level. Architecture opinions here would compete with the plan it was handed. |
+| *(neither)* | `release-it`, `good-strategy-bad-strategy`, `ux-heuristics` | These serve whoever writes the spec or designs the screens — a human-facing session, not a dispatched role. Both harnesses discover them from disk anyway. |
+
+### Verify, don't assume
+
+Ask the harness what it actually resolved. No model call, no cost:
+
+```bash
+opencode debug skill
+```
+
+At dispatch the orchestrator asks the same question through the adapter and
+prints a hint for any name it cannot find. That hint is advisory — skills are
+reinforcement, not a dependency, so a missing one never blocks a dispatch. The
+failure mode to watch for is therefore **quiet**: output that is weaker than it
+should be, with a `Hint: these skills are not visible to the harness` line
+scrolled somewhere above.
+
+Two things the install output will tell you and this README will not: the CLI
+reports Socket and Snyk risk rows per skill, and it emits install telemetry.
 
 ---
 
