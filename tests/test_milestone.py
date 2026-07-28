@@ -266,3 +266,87 @@ def test_create_rejects_an_unsafe_id(tmp_path):
         milestone.create(
             tmp_path, "../escape", "Intake", today=datetime.date(2026, 7, 28)
         )
+
+
+REGION_BRIEF = f"""# M
+
+## Track decomposition
+
+Split by ownership boundary.
+
+{milestone.TRACKS_BEGIN}
+### track-1: Intake
+depends_on: —
+- [ ] slice-01-gateway
+- [x] slice-02-native-sandbox{milestone.SEPARATOR}VERIFIED_CLOSED · Native sandbox
+
+### track-2: Billing
+depends_on: track-1
+- [ ] slice-04-ledger
+{milestone.TRACKS_END}
+
+## Open questions
+
+None.
+"""
+
+
+def test_a_plain_line_is_not_an_entry():
+    assert milestone.parse_entry("### track-1: Intake") is None
+    assert milestone.parse_entry("depends_on: track-1") is None
+    assert milestone.parse_entry("") is None
+
+
+def test_an_entry_without_a_suffix_parses():
+    assert milestone.parse_entry("- [ ] slice-01-gateway") == ("", "slice-01-gateway", " ")
+
+
+def test_an_entry_with_a_suffix_parses_and_drops_it():
+    """The suffix is machine-owned and regenerated, so it is never read back."""
+    line = f"- [x] slice-02{milestone.SEPARATOR}VERIFIED_CLOSED · Native sandbox"
+
+    assert milestone.parse_entry(line) == ("", "slice-02", "x")
+
+
+def test_an_indented_entry_keeps_its_indentation():
+    assert milestone.parse_entry("  - [ ] slice-01") == ("  ", "slice-01", " ")
+
+
+def test_a_line_that_looks_like_an_entry_but_is_not_one_is_refused():
+    """Never reinterpret a line the author may have meant differently."""
+    from scripts.errors import ValidationError
+
+    for line in ("- [] slice-01", "- [ ]slice-01", "- [y] slice-01", "- [ ] two words"):
+        with pytest.raises(ValidationError):
+            milestone.parse_entry(line)
+
+
+def test_track_entries_lists_every_slice_id_in_document_order():
+    assert milestone.track_entries(REGION_BRIEF) == [
+        "slice-01-gateway", "slice-02-native-sandbox", "slice-04-ledger"
+    ]
+
+
+def test_entries_outside_the_markers_are_not_track_entries():
+    text = REGION_BRIEF.replace("None.", "- [x] slice-99-unrelated")
+
+    assert "slice-99-unrelated" not in milestone.track_entries(text)
+
+
+def test_missing_markers_are_refused_with_both_names(tmp_path):
+    from scripts.errors import ValidationError
+
+    with pytest.raises(ValidationError) as excinfo:
+        milestone.track_entries("# M\n\n## Track decomposition\n\nNothing.\n")
+
+    message = str(excinfo.value)
+    assert milestone.TRACKS_BEGIN in message and milestone.TRACKS_END in message
+
+
+def test_markers_in_the_wrong_order_are_refused():
+    from scripts.errors import ValidationError
+
+    text = f"# M\n{milestone.TRACKS_END}\n- [ ] slice-01\n{milestone.TRACKS_BEGIN}\n"
+
+    with pytest.raises(ValidationError):
+        milestone.track_entries(text)

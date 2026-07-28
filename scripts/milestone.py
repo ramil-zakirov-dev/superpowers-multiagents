@@ -248,3 +248,64 @@ def create(
     target.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(target, render_template(milestone_id, title))
     return target
+
+
+#: `- [<box>] <slice_id>` with an optional machine-owned suffix. The slice_id
+#: is `\S+` because `_sanitize_id` already constrains what a real one may
+#: contain; anything with whitespace in it is a malformed entry, not an id.
+ITEM_PATTERN = re.compile(
+    r"^(?P<indent>\s*)- \[(?P<box>[ xX])\] (?P<slice_id>\S+)"
+    rf"(?:{re.escape(SEPARATOR)}.*)?$"
+)
+
+#: Anything starting like a list item is held to ITEM_PATTERN.
+_LOOKS_LIKE_ENTRY = re.compile(r"^\s*- \[")
+
+
+def parse_entry(line: str) -> tuple[str, str, str] | None:
+    """`(indent, slice_id, checkbox)` for a track entry, else None.
+
+    A line that starts like a list item but does not match the grammar raises
+    rather than being skipped: reinterpreting it would silently drop a slice
+    from the milestone, and skipping it would hide a typo forever.
+    """
+    if not _LOOKS_LIKE_ENTRY.match(line):
+        return None
+    match = ITEM_PATTERN.match(line)
+    if not match:
+        raise ValidationError(
+            f"malformed track entry: {line!r}. Expected "
+            f"`- [ ] <slice_id>` or `- [x] <slice_id>`, optionally followed by "
+            f"`{SEPARATOR}<generated text>`."
+        )
+    return match.group("indent"), match.group("slice_id"), match.group("box")
+
+
+def _region_bounds(text: str) -> tuple[int, int]:
+    """Line indices of the two markers. Raises when they are absent or crossed."""
+    begin = end = -1
+    for index, line in enumerate(text.split("\n")):
+        if TRACKS_BEGIN in line and begin == -1:
+            begin = index
+        elif TRACKS_END in line and end == -1:
+            end = index
+    if begin == -1 or end == -1 or end < begin:
+        raise ValidationError(
+            f"track markers not found in the expected order. A milestone brief "
+            f"must contain {TRACKS_BEGIN} followed by {TRACKS_END} inside its "
+            f"'## Track decomposition' section. Regenerate with `milestone new`, "
+            f"or add them by hand."
+        )
+    return begin, end
+
+
+def track_entries(text: str) -> list[str]:
+    """Every `slice_id` listed between the markers, in document order."""
+    begin, end = _region_bounds(text)
+    lines = text.split("\n")
+    entries = []
+    for line in lines[begin + 1:end]:
+        parsed = parse_entry(line)
+        if parsed is not None:
+            entries.append(parsed[1])
+    return entries
