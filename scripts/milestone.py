@@ -6,6 +6,7 @@ dispatched, owns no branch, and ends in `MILESTONE_CLOSED` when a human says the
 objective was met. Everything that differs between them lives here.
 """
 
+import re
 from pathlib import Path
 
 from scripts.errors import ValidationError
@@ -83,3 +84,64 @@ def machine_for(kind: str, config: dict) -> tuple[list, dict]:
         return list(MILESTONE_STATUSES), dict(MILESTONE_TRANSITIONS)
     state_machine = config.get("state_machine") or {}
     return state_machine.get("valid_statuses") or [], state_machine.get("transitions") or {}
+
+
+#: The brief's shape, in the order the template generates it. Presence is
+#: enforced; order is not — the template supplies it, and enforcing it would
+#: add a failure mode that buys nothing.
+REQUIRED_SECTIONS = (
+    "Problem",
+    "Users",
+    "Goals",
+    "Non-goals",
+    "Success metrics",
+    "Constraints & invariants",
+    "Track decomposition",
+    "Open questions",
+)
+
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+
+
+def missing_sections(text: str) -> list[str]:
+    """Required sections that are absent or hold nothing but template hints.
+
+    A section is present when a level-2 heading equals its name exactly, after
+    stripping surrounding whitespace. It is non-empty when at least one line
+    beneath it — up to the next heading of any level — is neither blank, nor
+    part of an HTML comment, nor a heading.
+
+    This observes presence, never quality. `Success metrics` in particular can
+    be satisfied by a plausible-looking sentence that measures nothing; the
+    section is required because forcing the question is worth it, not because
+    the check can judge the answer.
+    """
+    filled: set[str] = set()
+    current: str | None = None
+    in_comment = False
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+
+        heading = _HEADING.match(line)
+        if heading:
+            level, title = len(heading.group(1)), heading.group(2).strip()
+            current = title if level == 2 else None
+            continue
+
+        if current is None or not stripped:
+            continue
+
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+
+        filled.add(current)
+
+    return [section for section in REQUIRED_SECTIONS if section not in filled]

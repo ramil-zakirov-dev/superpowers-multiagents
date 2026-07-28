@@ -80,3 +80,111 @@ def test_machine_for_returns_the_kinds_own_vocabulary():
 
     statuses, _ = milestone.machine_for(milestone.SLICE_KIND, config)
     assert "MILESTONE_CLOSED" not in statuses and "DRAFT_SPEC" in statuses
+
+
+FILLED_BRIEF = """---
+kind: milestone
+status: MILESTONE_DRAFT
+---
+
+# Milestone 1
+
+## Problem
+Operators retype the same answer twenty times a day.
+
+## Users
+Support operators; back-office administrators.
+
+## Goals
+1. Cut manual retyping.
+
+## Non-goals
+**Not in this milestone:** billing.
+
+## Success metrics
+| Goal | How we will know |
+| --- | --- |
+| 1 | Median handle time drops below 4 minutes |
+
+## Constraints & invariants
+On-prem only.
+
+## Track decomposition
+Split by ownership boundary.
+
+### track-1: Intake
+- [ ] slice-01-gateway
+
+## Open questions
+Who owns the retention policy? — owner.
+"""
+
+
+def test_a_fully_written_brief_has_no_missing_sections():
+    assert milestone.missing_sections(FILLED_BRIEF) == []
+
+
+@pytest.mark.parametrize("section", milestone.REQUIRED_SECTIONS)
+def test_each_required_section_is_reported_when_absent(section):
+    """Every section is individually load-bearing, so test them individually."""
+    lines = FILLED_BRIEF.splitlines()
+    start = lines.index(f"## {section}")
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    without = "\n".join(lines[:start] + lines[end:])
+
+    assert milestone.missing_sections(without) == [section]
+
+
+def test_a_section_holding_only_its_template_hint_counts_as_empty():
+    """The template's prompts are HTML comments precisely so this is true."""
+    text = FILLED_BRIEF.replace(
+        "Operators retype the same answer twenty times a day.",
+        "<!-- Whose pain, and why now. Include what exists today. -->",
+    )
+
+    assert milestone.missing_sections(text) == ["Problem"]
+
+
+def test_a_multi_line_html_comment_still_counts_as_empty():
+    text = FILLED_BRIEF.replace(
+        "Operators retype the same answer twenty times a day.",
+        "<!-- Whose pain,\nand why now.\n-->",
+    )
+
+    assert milestone.missing_sections(text) == ["Problem"]
+
+
+def test_every_offending_section_is_reported_in_one_run():
+    """One attempt should not have to be repeated eight times."""
+    text = FILLED_BRIEF.replace("Split by ownership boundary.", "")
+    text = text.replace("On-prem only.", "")
+
+    assert milestone.missing_sections(text) == [
+        "Constraints & invariants", "Track decomposition"
+    ]
+
+
+def test_the_report_follows_the_canonical_section_order():
+    assert milestone.missing_sections("# Empty\n") == list(milestone.REQUIRED_SECTIONS)
+
+
+def test_heading_matching_is_exact_after_stripping_whitespace():
+    """`## Non-goals ` matches; `## Non Goals` and `## non-goals` do not."""
+    padded = FILLED_BRIEF.replace("## Non-goals", "##   Non-goals   ")
+    assert milestone.missing_sections(padded) == []
+
+    renamed = FILLED_BRIEF.replace("## Non-goals", "## Non Goals")
+    assert milestone.missing_sections(renamed) == ["Non-goals"]
+
+    lowered = FILLED_BRIEF.replace("## Non-goals", "## non-goals")
+    assert milestone.missing_sections(lowered) == ["Non-goals"]
+
+
+def test_a_level_three_heading_does_not_satisfy_its_parent_section():
+    """Content under `### track-1` belongs to the track, not to the section."""
+    text = FILLED_BRIEF.replace("Split by ownership boundary.", "")
+
+    assert "Track decomposition" in milestone.missing_sections(text)
