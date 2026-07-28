@@ -295,6 +295,45 @@ def test_adapter_that_cannot_tell_stays_silent(
     assert "not visible to the harness" not in capsys.readouterr().out
 
 
+def test_isolated_role_skills_check_uses_the_worktree_not_project_root(
+    tmp_project, demo_spec, monkeypatch, tmp_path
+):
+    """For an isolated role, list_skills must be asked about the worktree, not
+    the project root -- every other skills test runs with isolated_worktree:
+    false, so a future regression swapping the argument would go undetected
+    while they all stay green."""
+    from tests.conftest import REPO_ROOT
+    skills_log = tmp_path / "list_skills-calls.txt"
+    monkeypatch.setenv("SUPERPOWERS_PROMPT_LOG", str(tmp_path / "prompt.txt"))
+    monkeypatch.setenv("SUPERPOWERS_SKILLS_LOG", str(skills_log))
+    monkeypatch.setenv("SUPERPOWERS_VISIBLE_SKILLS", "clean-architecture")
+
+    (tmp_project / "recording_adapter.py").write_text(
+        RECORDING_ADAPTER.format(repo_root=str(REPO_ROOT)), encoding="utf-8"
+    )
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        "agents:\n"
+        "  planner:\n"
+        "    harness_adapter: 'recording_adapter.py'\n"
+        "    isolated_worktree: true\n"
+        "    skills:\n"
+        "      - clean-architecture\n",
+        encoding="utf-8",
+    )
+
+    cmd_dispatch_agent(_args(demo_spec))
+
+    worktree = tmp_project / ".worktrees" / "slice-01-demo"
+    assert _wait_for(lambda: worktree.exists())
+    assert skills_log.exists(), "list_skills was never called for a role that declares skills"
+    logged_cwd = skills_log.read_text(encoding="utf-8").strip()
+    assert logged_cwd != str(tmp_project), (
+        f"list_skills was called with the project root ({logged_cwd}) "
+        "instead of the worktree"
+    )
+    assert logged_cwd == str(worktree)
+
+
 def test_no_skills_asks_the_harness_nothing(tmp_project, demo_spec, monkeypatch, tmp_path):
     """An unconfigured dispatch must not pay for a subprocess it cannot use."""
     skills_log = tmp_path / "list_skills-calls.txt"

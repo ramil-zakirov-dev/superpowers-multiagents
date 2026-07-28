@@ -3,7 +3,8 @@ slice_id: "slice-05-role-skills"
 title: "Role skills implementation plan"
 status: PLAN_GENERATED
 target_version: "2.4.0"
-depends_on: ["slice-05-role-skills"]
+spec: "docs/superpowers/specs/2026-07-28-slice-05-role-skills-design.md"
+depends_on: []
 ---
 
 # Role Skills Implementation Plan

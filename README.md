@@ -291,7 +291,11 @@ Using a harness without those skills is fine — override each role's
 `prompt_template` instead. See
 [docs/configuration.md](docs/configuration.md#prompt-templates-and-their-skill-dependency).
 
-Alternatively, you can name skills to reinforce a role's behavior via the `agents:.<role>.skills` list in `.superpowers/agents.yaml`. These names are appended to the rendered prompt as reinforcement — allowing guidance injection without replacing the default `prompt_template`. See [docs/configuration.md](docs/configuration.md#skills-per-role-reinforcement).
+Separately — for a harness that already has the skills you want — a role can
+name them via the `skills` list under `agents.<role>` in
+`.superpowers/agents.yaml`. The names are appended to the rendered prompt as
+reinforcement, not a replacement for `prompt_template`. See
+[docs/configuration.md](docs/configuration.md#skills-per-role-reinforcement).
 
 ### 2. Check Workflow Status
 

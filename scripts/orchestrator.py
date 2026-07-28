@@ -62,12 +62,19 @@ def _warn_if_invisible_skills(agent_config: dict, adapter, cwd: Path) -> None:
     declared = skills_mod.declared_skills(agent_config)
     if not declared:
         return
-    missing = skills_mod.invisible_skills(declared, adapter.list_skills(agent_config, cwd))
-    if missing:
-        print(
-            "Hint: these skills are not visible to the harness and will have "
-            "no effect: " + " ".join(missing)
-        )
+    try:
+        missing = skills_mod.invisible_skills(declared, adapter.list_skills(agent_config, cwd))
+        if missing:
+            print(
+                "Hint: these skills are not visible to the harness and will have "
+                "no effect: " + " ".join(missing)
+            )
+    except Exception:
+        # A project-supplied custom adapter's list_skills is out of our
+        # control. This check is purely advisory and runs after the dispatch
+        # has already committed -- it must never surface a failure to the
+        # user for something that isn't the user's problem to see.
+        pass
 
 
 # ---------------------------------------------------------------------------

@@ -139,7 +139,7 @@ onto disk is the project's business, and a default would be destroyed rather
 than extended by any project that added one of its own, because `deep_merge`
 replaces lists wholesale.
 
-Before dispatch the orchestrator asks the harness adapter which skills it can
+After dispatch the orchestrator asks the harness adapter which skills it can
 see and prints a hint for any that it cannot. This is advisory: skills are
 reinforcement, not a dependency, and a missing one never blocks a dispatch. A
 malformed `skills` value is a different matter and fails closed.
