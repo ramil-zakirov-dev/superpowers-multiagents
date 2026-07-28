@@ -80,6 +80,27 @@ The agent command is passed as an argument vector and spawned with
 `shell=False`. No shell parses a prompt, a path, or a configured argument at
 any point.
 
+#### What the exit code cannot tell you
+
+The exit code reports whether the agent's *process* survived, not whether the
+work is finished. An executor that stops mid-plan **on purpose** — the
+`subagent-driven-development` skill instructs it to halt and report `BLOCKED`
+rather than push a broken task through — still exits `0`, because nothing
+failed at the process level. The supervisor records the role's success status
+over a half-finished plan.
+
+That is deliberate. The exit code is the only signal the orchestrator can
+trust: asking the agent for its own verdict would put the state machine at the
+mercy of the process it exists to supervise, and a stuck agent is precisely the
+case where that verdict is least reliable. Deriving the status from a file the
+agent writes has the same flaw and adds a format the plugin would have to know.
+
+The cost is a narrow one, and it lands on the reader: `EXECUTION_COMPLETE`
+means "the executor's process ended cleanly", not "the plan is done". The
+`VERIFIED_CLOSED` human gate is what separates the two, which is why it is not
+optional. Before setting it, read the plan's unchecked task boxes and whatever
+progress record the agent kept.
+
 ### Dispatch ordering
 
 The order of steps in `cmd_dispatch_agent` is load-bearing, not incidental.

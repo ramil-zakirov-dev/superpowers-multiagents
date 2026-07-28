@@ -66,7 +66,7 @@ agents:
     in_progress_status: EXECUTING
     success_status: EXECUTION_COMPLETE
     isolated_worktree: true
-    prompt_template: 'Execute implementation plan at {file} using TDD subagent execution. Check off tasks in plan as completed.'
+    prompt_template: 'Execute the implementation plan at {file} using the subagent-driven-development skill. Check off tasks in the plan as completed.'
     extra_args: []
 
 # Per-slice infrastructure sandbox (optional; omitted or enabled: false = no docker call ever made)
@@ -94,9 +94,31 @@ sandbox:
 | `in_progress_status` | string | Status to set before launching the agent |
 | `success_status` | string | Status set by the orchestrator when the agent exits 0 |
 | `isolated_worktree` | bool | Whether to run in an isolated git worktree |
-| `prompt_template` | string | Task prompt with `{file}` placeholder |
+| `prompt_template` | string | Task prompt with `{file}` placeholder (see [Prompt templates](#prompt-templates-and-their-skill-dependency)) |
 | `extra_args` | list | Additional CLI flags (supports `{provider}` interpolation) |
 | `harness_adapter` | string | Path to a custom Python adapter file |
+
+## Prompt templates and their skill dependency
+
+The default `prompt_template` for both shipped roles names a skill from
+[obra/superpowers](https://github.com/obra/superpowers): the planner is told to
+use `writing-plans`, the executor to use `subagent-driven-development`. Those
+skills are what turn a plan file into a TDD task breakdown and a task breakdown
+into reviewed commits — the defaults assume them rather than restating their
+contents in a prompt string.
+
+**This plugin does not install them and cannot detect their absence.** The
+dispatched agent runs in a separate harness whose skill inventory is invisible
+from here, so a missing skill is not an error: the agent reads an instruction it
+cannot follow and quietly does its best. Make sure the harness carries them —
+for OpenCode, declare the plugin in `opencode.json`:
+
+```json
+{ "plugin": ["superpowers@git+https://github.com/obra/superpowers.git"] }
+```
+
+If your harness has no equivalent, override `prompt_template` for each role with
+a prompt that spells out the discipline you want instead of naming a skill.
 
 ## Adding Custom Agents
 

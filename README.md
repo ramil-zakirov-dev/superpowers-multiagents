@@ -249,6 +249,20 @@ cd superpowers-multiagents
 pip install -r requirements.txt
 ```
 
+**Prerequisite — the dispatched harness needs the Superpowers skills.** The
+default prompts send the planner to `writing-plans` and the executor to
+`subagent-driven-development`; this plugin ships neither and cannot see whether
+the harness has them, so a missing skill degrades silently rather than failing.
+For OpenCode, declare the plugin in `opencode.json`:
+
+```json
+{ "plugin": ["superpowers@git+https://github.com/obra/superpowers.git"] }
+```
+
+Using a harness without those skills is fine — override each role's
+`prompt_template` instead. See
+[docs/configuration.md](docs/configuration.md#prompt-templates-and-their-skill-dependency).
+
 ### 2. Check Workflow Status
 
 From a clone:

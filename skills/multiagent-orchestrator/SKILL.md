@@ -53,7 +53,7 @@ The **state machine** (statuses and transitions) is also configurable via the `s
 1. **Agent 1 (Fable 5 - Claude Desktop):** Milestone & Track Architect. Designs system boundaries, domain models, and defines Tracks (`track-N`) containing Vertical Slices (`slice-N`) inside `docs/superpowers/milestones/YYYY-MM-DD-milestone-N.md`.
 2. **Agent 2 (Opus 5 - Claude Desktop):** Vertical Slice Architect & Auditor. Selects a Track, designs `docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md` with Code Anchors & Contracts. Presents spec to user (`SPEC_APPROVED`). Audits plans (`PLAN_APPROVED`) and code diffs (`VERIFIED_CLOSED`).
 3. **Agent 3 (Kimi K3 - OpenCode CLI, configurable):** Implementation Planner. Triggered when status is `SPEC_APPROVED`. Uses `writing-plans` skill to generate `docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md`. The orchestrator sets status to `PLAN_GENERATED` (on exit 0) or `FAILED` (on exit !=0) from the planner's exit code.
-4. **Agent 4 (Minimax M3 - OpenCode CLI, configurable):** TDD Executor. Triggered when status is `PLAN_APPROVED`. Executes tasks step-by-step using TDD. The orchestrator sets status to `EXECUTION_COMPLETE` (on exit 0) or `FAILED` (on exit !=0) from the executor's exit code.
+4. **Agent 4 (Minimax M3 - OpenCode CLI, configurable):** TDD Executor. Triggered when status is `PLAN_APPROVED`. Uses the `subagent-driven-development` skill to execute the plan task by task. The orchestrator sets status to `EXECUTION_COMPLETE` (on exit 0) or `FAILED` (on exit !=0) from the executor's exit code — the exit code reports that the process ended, not that the plan is finished, so an agent that halts on a blocker still lands in `EXECUTION_COMPLETE`. The `VERIFIED_CLOSED` audit is what catches that.
 
 ---
 

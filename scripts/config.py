@@ -62,7 +62,7 @@ DEFAULT_CONFIG = {
             "in_progress_status": "EXECUTING",
             "success_status": "EXECUTION_COMPLETE",
             "isolated_worktree": True,
-            "prompt_template": "Execute implementation plan at {file} using TDD subagent execution. Check off tasks in plan as completed.",
+            "prompt_template": "Execute the implementation plan at {file} using the subagent-driven-development skill. Check off tasks in the plan as completed.",
             "extra_args": []
         }
     },

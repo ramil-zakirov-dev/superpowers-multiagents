@@ -200,6 +200,97 @@ def test_documented_sandbox_example_survives_the_real_validator():
         validate_config(deep_merge(DEFAULT_CONFIG, parsed))
 
 
+def _documented_agent_blocks():
+    """Every ```yaml block in configuration.md that declares `agents:`."""
+    import re as _re
+
+    from ruamel.yaml import YAML
+
+    from scripts.utils import _to_plain_dict
+
+    for block in _re.findall(r"```yaml\n(.*?)```", CONFIGURATION, _re.DOTALL):
+        parsed = _to_plain_dict(YAML(typ="rt").load(block)) or {}
+        if isinstance(parsed.get("agents"), dict):
+            yield parsed["agents"]
+
+
+def test_documented_agent_defaults_match_the_code():
+    """The doc's default block is read as the defaults; drift makes it a lie.
+
+    Roles the docs invent to illustrate a point (`reviewer`) are not in
+    DEFAULT_CONFIG and are skipped — only the roles the plugin actually
+    ships are held to equality.
+    """
+    checked = 0
+    for agents in _documented_agent_blocks():
+        for role, documented in agents.items():
+            if role not in DEFAULT_CONFIG["agents"]:
+                continue
+            actual = DEFAULT_CONFIG["agents"][role]
+            for key, value in documented.items():
+                assert actual.get(key) == value, (
+                    f"docs/configuration.md documents {role}.{key} as {value!r}, "
+                    f"but DEFAULT_CONFIG has {actual.get(key)!r}"
+                )
+                checked += 1
+    assert checked, "no shipped role found in any documented agents block"
+
+
+#: Skills the default prompt templates instruct a dispatched agent to use.
+#: They ship with obra/superpowers, not with this plugin, so naming one is a
+#: dependency claim: the harness must carry that skill or the instruction is
+#: a no-op the agent silently works around.
+PROMPTED_SKILLS = frozenset({"writing-plans", "subagent-driven-development"})
+
+
+def test_default_prompts_name_their_skills_precisely():
+    """A vague paraphrase does not load a skill; the skill's name does.
+
+    The executor's template said "using TDD subagent execution" — prose that
+    names no skill — while the planner's named `writing-plans` outright. The
+    asymmetry meant only one of the two roles was actually being pointed at
+    the discipline the workflow assumes.
+    """
+    templates = " ".join(
+        agent.get("prompt_template", "") for agent in DEFAULT_CONFIG["agents"].values()
+    )
+    for skill in sorted(PROMPTED_SKILLS):
+        assert skill in templates, (
+            f"no default prompt_template names the '{skill}' skill"
+        )
+
+
+def test_prompted_skill_dependency_is_declared_in_the_docs():
+    """An undeclared dependency is invisible until an agent silently ignores it.
+
+    The default prompts only work on a harness that carries the superpowers
+    skills. This plugin cannot install them and cannot detect their absence,
+    so the requirement has to be written down where an installing user reads.
+    """
+    documented = README + CONFIGURATION
+    for skill in sorted(PROMPTED_SKILLS):
+        assert skill in documented, (
+            f"default prompts instruct agents to use the '{skill}' skill, but "
+            f"neither README.md nor docs/configuration.md says it is required"
+        )
+    assert "superpowers" in documented.lower()
+
+
+def test_self_reported_blockage_seam_is_documented():
+    """Exit code and the agent's own verdict can disagree; say which wins.
+
+    An executor that stops mid-plan and writes its own BLOCKED record still
+    exits 0 on most harnesses, so the supervisor records the success status
+    over a half-finished plan. That is by design — the exit code is the only
+    signal the orchestrator can trust — but a reader who does not know it
+    will read EXECUTION_COMPLETE as "the plan is done".
+    """
+    assert "BLOCKED" in ARCHITECTURE, (
+        "architecture.md never explains what happens when an agent declares "
+        "itself blocked but its process exits 0"
+    )
+
+
 def test_hook_ordering_change_is_recorded():
     """A published contract that changed must say so somewhere a reader looks."""
     documented = ARCHITECTURE + CONFIGURATION + README
