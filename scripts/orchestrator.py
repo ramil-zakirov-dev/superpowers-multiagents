@@ -83,6 +83,41 @@ def cmd_status(args):
         print()
 
 
+def _set_milestone_status(filepath, new_status, valid_statuses, transitions):
+    """A milestone's transitions. No branch, no worktree, no sandbox.
+
+    Both gates run before the status write, so a refused transition leaves the
+    document exactly as it was.
+    """
+    text = filepath.read_text(encoding="utf-8")
+
+    if new_status == "MILESTONE_ACTIVE":
+        missing = milestone_mod.missing_sections(text)
+        if missing:
+            print(f"Error: {filepath.name} cannot be approved while sections are empty:")
+            for section in missing:
+                print(f"   - {section}")
+            sys.exit(1)
+
+    if new_status == "MILESTONE_CLOSED":
+        resolve = milestone_mod.slice_resolver(
+            milestone_mod.search_dirs_for(filepath), exclude=filepath
+        )
+        try:
+            open_slices = milestone_mod.unclosed(text, resolve)
+        except OrchestratorError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        if open_slices:
+            print(f"Error: {filepath.name} cannot be closed; these slices are open:")
+            for slice_id, status in open_slices:
+                print(f"   - {slice_id} ({status})")
+            sys.exit(1)
+
+    if not update_frontmatter_status(filepath, new_status, valid_statuses, transitions):
+        sys.exit(1)
+
+
 def cmd_set_status(args):
     """Set a slice's status. VERIFIED_CLOSED merges first, then marks.
 
@@ -99,16 +134,25 @@ def cmd_set_status(args):
         print(f"Error: {exc}")
         sys.exit(1)
 
-    state_machine = config["state_machine"]
-    valid_statuses = state_machine["valid_statuses"]
-    transitions = state_machine["transitions"]
+    frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
+    try:
+        milestone_mod.check_kind_declaration(filepath, frontmatter)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    kind = milestone_mod.document_kind(frontmatter)
+    valid_statuses, transitions = milestone_mod.machine_for(kind, config)
+
+    if kind == milestone_mod.MILESTONE_KIND:
+        _set_milestone_status(filepath, args.status, valid_statuses, transitions)
+        return
 
     if args.status != "VERIFIED_CLOSED":
         if not update_frontmatter_status(filepath, args.status, valid_statuses, transitions):
             sys.exit(1)
         return
 
-    frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
     slice_id = frontmatter.get("slice_id", filepath.stem)
     current_status = frontmatter.get("status", "UNKNOWN")
 
