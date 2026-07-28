@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 
 from scripts.config import DEFAULT_CONFIG, deep_merge, load_agent_config, resolve_agent
@@ -129,6 +131,26 @@ def test_validate_rejects_empty_valid_statuses():
 def test_known_agent_keys_cover_the_documented_schema():
     assert "success_status" in KNOWN_AGENT_KEYS
     assert "harness_adapter" in KNOWN_AGENT_KEYS
+
+
+def test_skills_key_is_accepted():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["agents"]["planner"]["skills"] = ["clean-architecture"]
+    validate_config(config)          # must not raise
+
+
+@pytest.mark.parametrize("value", [
+    "clean-architecture",            # a bare string is the likely typo
+    ["clean-architecture", 7],
+    ["clean-architecture", ""],
+    ["clean-architecture", "   "],
+])
+def test_malformed_skills_is_refused(value):
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["agents"]["planner"]["skills"] = value
+    with pytest.raises(ConfigError) as excinfo:
+        validate_config(config)
+    assert "planner" in str(excinfo.value)
 
 
 def _with_sandbox(**overrides):

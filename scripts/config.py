@@ -143,6 +143,7 @@ KNOWN_AGENT_KEYS = frozenset({
     "prompt_template",
     "extra_args",
     "harness_adapter",
+    "skills",
 })
 
 
@@ -206,6 +207,20 @@ def validate_config(config: dict) -> None:
                 raise ConfigError(
                     f"agent '{role}'.allowed_statuses contains unknown status '{status}'."
                 )
+        skills = agent.get("skills")
+        if skills is not None:
+            if not isinstance(skills, list):
+                raise ConfigError(
+                    f"agent '{role}'.skills must be a list of skill names, "
+                    f"got {type(skills).__name__}. A bare string is the common "
+                    f"slip: write `skills: [name]`, not `skills: name`."
+                )
+            for entry in skills:
+                if not isinstance(entry, str) or not entry.strip():
+                    raise ConfigError(
+                        f"agent '{role}'.skills contains {entry!r}: every skill "
+                        f"name must be a non-empty string."
+                    )
 
     sandbox = config.get("sandbox") or {}
     unknown_keys = set(sandbox) - KNOWN_SANDBOX_KEYS
