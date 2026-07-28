@@ -309,3 +309,62 @@ def track_entries(text: str) -> list[str]:
         if parsed is not None:
             entries.append(parsed[1])
     return entries
+
+
+#: Rendered for an entry naming a slice whose spec has not been written yet.
+#: Not an error: a planning document must be able to name what does not exist.
+NOT_SPECCED = "not yet specced"
+
+
+def _render_entry(indent: str, slice_id: str, status, title) -> str:
+    if status is None:
+        return f"{indent}- [ ] {slice_id}{SEPARATOR}{NOT_SPECCED}"
+    box = "x" if status == TERMINAL_STATUS[SLICE_KIND] else " "
+    suffix = f"{status} · {title}" if title else status
+    return f"{indent}- [{box}] {slice_id}{SEPARATOR}{suffix}"
+
+
+def sync_text(text: str, resolve) -> str:
+    """Rewrite every track entry's checkbox and suffix from live slice status.
+
+    `resolve(slice_id)` returns `(status, title)`, or `(None, None)` when the
+    id names nothing on disk. It may raise — an ambiguous id, for instance —
+    and the exception propagates so that nothing is written.
+
+    Splitting and rejoining on "\\n" round-trips exactly, including the
+    trailing newline, so a file whose entries already read correctly comes back
+    byte-identical.
+    """
+    begin, end = _region_bounds(text)
+    lines = text.split("\n")
+
+    for index in range(begin + 1, end):
+        parsed = parse_entry(lines[index])
+        if parsed is None:
+            continue
+        indent, slice_id, _box = parsed
+        status, title = resolve(slice_id)
+        lines[index] = _render_entry(indent, slice_id, status, title)
+
+    return "\n".join(lines)
+
+
+def progress(text: str, resolve) -> tuple[int, int]:
+    """`(closed, total)` over every slice the brief's tracks list."""
+    entries = track_entries(text)
+    closed = sum(
+        1 for slice_id in entries
+        if resolve(slice_id)[0] == TERMINAL_STATUS[SLICE_KIND]
+    )
+    return closed, len(entries)
+
+
+def unclosed(text: str, resolve) -> list[tuple[str, str]]:
+    """`(slice_id, status)` for every listed slice that is not closed."""
+    open_entries = []
+    for slice_id in track_entries(text):
+        status, _title = resolve(slice_id)
+        if status == TERMINAL_STATUS[SLICE_KIND]:
+            continue
+        open_entries.append((slice_id, status or NOT_SPECCED))
+    return open_entries

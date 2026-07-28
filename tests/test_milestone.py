@@ -350,3 +350,97 @@ def test_markers_in_the_wrong_order_are_refused():
 
     with pytest.raises(ValidationError):
         milestone.track_entries(text)
+
+
+def _resolver(table):
+    """A `resolve` built from a {slice_id: (status, title)} mapping."""
+    def resolve(slice_id):
+        return table.get(slice_id, (None, None))
+    return resolve
+
+
+TABLE = {
+    "slice-01-gateway": ("DRAFT_SPEC", "Gateway intake"),
+    "slice-02-native-sandbox": ("VERIFIED_CLOSED", "Native sandbox"),
+}
+
+
+def test_the_checkbox_is_ticked_only_for_verified_closed():
+    out = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
+
+    assert "- [ ] slice-01-gateway" in out
+    assert "- [x] slice-02-native-sandbox" in out
+
+
+def test_the_suffix_is_regenerated_from_the_slice_frontmatter():
+    out = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
+
+    assert f"slice-01-gateway{milestone.SEPARATOR}DRAFT_SPEC · Gateway intake" in out
+
+
+def test_an_unresolvable_slice_is_rendered_not_specced_and_is_not_an_error():
+    """A milestone must be able to name slices that do not exist yet."""
+    out = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
+
+    assert f"- [ ] slice-04-ledger{milestone.SEPARATOR}{milestone.NOT_SPECCED}" in out
+
+
+def test_a_resolved_slice_without_a_title_renders_the_status_alone():
+    table = dict(TABLE, **{"slice-04-ledger": ("PLAN_APPROVED", None)})
+
+    out = milestone.sync_text(REGION_BRIEF, _resolver(table))
+
+    assert f"- [ ] slice-04-ledger{milestone.SEPARATOR}PLAN_APPROVED\n" in out
+
+
+def test_the_sync_is_idempotent_byte_for_byte():
+    """Idempotency follows from regenerating the suffix, not from patching it."""
+    once = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
+    twice = milestone.sync_text(once, _resolver(TABLE))
+
+    assert once == twice
+
+
+def test_nothing_outside_the_markers_is_touched():
+    out = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
+
+    before = out.split(milestone.TRACKS_BEGIN)[0]
+    after = out.split(milestone.TRACKS_END)[1]
+    assert before == REGION_BRIEF.split(milestone.TRACKS_BEGIN)[0]
+    assert after == REGION_BRIEF.split(milestone.TRACKS_END)[1]
+    assert "## Open questions" in after
+
+
+def test_headings_depends_on_lines_and_blank_lines_inside_the_region_survive():
+    """Inside the markers the machine owns the checkbox and the suffix. Nothing else."""
+    out = milestone.sync_text(REGION_BRIEF, _resolver(TABLE))
+
+    assert "### track-1: Intake" in out
+    assert "### track-2: Billing" in out
+    assert "depends_on: —" in out
+    assert "depends_on: track-1" in out
+    assert "\n\n### track-2" in out
+
+
+def test_a_trailing_newline_is_preserved():
+    assert milestone.sync_text(REGION_BRIEF, _resolver(TABLE)).endswith("\n")
+
+
+def test_a_malformed_entry_aborts_the_whole_sync():
+    from scripts.errors import ValidationError
+
+    text = REGION_BRIEF.replace("- [ ] slice-04-ledger", "- [] slice-04-ledger")
+
+    with pytest.raises(ValidationError):
+        milestone.sync_text(text, _resolver(TABLE))
+
+
+def test_progress_counts_closed_over_total():
+    assert milestone.progress(REGION_BRIEF, _resolver(TABLE)) == (1, 3)
+
+
+def test_unclosed_reports_every_open_slice_with_its_status():
+    assert milestone.unclosed(REGION_BRIEF, _resolver(TABLE)) == [
+        ("slice-01-gateway", "DRAFT_SPEC"),
+        ("slice-04-ledger", milestone.NOT_SPECCED),
+    ]
