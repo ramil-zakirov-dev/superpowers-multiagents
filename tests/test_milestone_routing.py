@@ -223,3 +223,34 @@ def test_a_failing_auto_sync_warns_but_does_not_reopen_the_slice(
 
     assert _status_of(plan_file) == "VERIFIED_CLOSED"
     assert "Warning" in capsys.readouterr().out
+
+
+def test_dispatching_an_agent_against_a_milestone_is_refused(tmp_project, capsys):
+    """No role operates on a brief. Before this, a milestone at SPEC_APPROVED
+    passed the state gate and a worktree named after the file was created."""
+    from scripts.orchestrator import cmd_dispatch_agent
+
+    brief = _write_brief(tmp_project, status="MILESTONE_ACTIVE")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_dispatch_agent(
+            argparse.Namespace(role="planner", file=str(brief), model=None)
+        )
+
+    assert excinfo.value.code == 1
+    assert "milestone" in capsys.readouterr().out.lower()
+
+
+def test_a_refused_dispatch_leaves_no_lock_and_no_worktree(tmp_project):
+    from scripts.orchestrator import cmd_dispatch_agent
+
+    brief = _write_brief(tmp_project, status="MILESTONE_ACTIVE")
+
+    with pytest.raises(SystemExit):
+        cmd_dispatch_agent(
+            argparse.Namespace(role="planner", file=str(brief), model=None)
+        )
+
+    assert not (tmp_project / ".worktrees").exists()
+    locks = tmp_project / ".superpowers" / "locks"
+    assert not locks.exists() or not list(locks.glob("*.lock"))

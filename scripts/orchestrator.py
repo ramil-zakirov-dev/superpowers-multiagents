@@ -275,6 +275,21 @@ def cmd_dispatch_agent(args):
         sys.exit(1)
 
     frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+
+    try:
+        milestone_mod.check_kind_declaration(target_file, frontmatter)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    if milestone_mod.document_kind(frontmatter) == milestone_mod.MILESTONE_KIND:
+        print(
+            f"[Kind Gate] Cannot dispatch {role} for {target_file.name}: it is a "
+            f"milestone brief. No agent role operates on a milestone — dispatch "
+            f"against the slice spec or plan the brief lists."
+        )
+        sys.exit(1)
+
     slice_id = frontmatter.get("slice_id", target_file.stem)
     current_status = frontmatter.get("status", "UNKNOWN")
 
