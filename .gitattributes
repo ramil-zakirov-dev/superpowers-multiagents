@@ -6,3 +6,4 @@
 # a visible error. Force LF regardless of clone-time autocrlf settings.
 hooks/run-hook.cmd text eol=lf
 hooks/session-start text eol=lf
+commands/*.md text eol=lf

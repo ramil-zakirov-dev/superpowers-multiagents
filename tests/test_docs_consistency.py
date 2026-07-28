@@ -428,6 +428,14 @@ def command_files():
     return sorted(COMMANDS_DIR.glob("*.md"), key=lambda p: p.name)
 
 
+#: The 8 plugin commands also ship to a user's machine, so the placeholder
+#: and phantom-harness guards over SHIPPED_TEXT must see them too.
+SHIPPED_TEXT.update({
+    f"commands/{path.name}": path.read_text(encoding="utf-8")
+    for path in command_files()
+})
+
+
 def command_frontmatter(path):
     """The command's YAML frontmatter as a flat mapping.
 
@@ -435,6 +443,11 @@ def command_frontmatter(path):
     that module parses *lifecycle documents* and is entitled to assume a
     `status` field. A command file has none, and a shared parser would grow a
     branch for a file kind it otherwise knows nothing about.
+
+    Also deliberately not a real YAML parse: `argument-hint: [role] [file]`
+    is the documented plugin convention (plugin-dev/command-development's own
+    examples use it), but a strict YAML parser reads `[role] [file]` as a
+    malformed flow sequence and rejects it.
     """
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n"), f"{path.name} has no frontmatter"
@@ -611,6 +624,15 @@ def test_readme_documents_every_command():
     for path in command_files():
         assert f"{COMMAND_PREFIX}{path.stem}" in README, (
             f"README does not document {COMMAND_PREFIX}{path.stem}"
+        )
+
+
+def test_skill_documents_every_command_in_its_own_surface_section():
+    """SKILL.md's own command-surface table is the copy injected into every
+    session by hooks/session-start; it must not silently fall behind README's."""
+    for path in command_files():
+        assert f"{COMMAND_PREFIX}{path.stem}" in SKILL, (
+            f"SKILL.md does not document {COMMAND_PREFIX}{path.stem}"
         )
 
 
