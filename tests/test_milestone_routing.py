@@ -175,6 +175,25 @@ def test_a_file_in_milestones_without_the_kind_field_is_refused(tmp_project, cap
     assert "kind: milestone" in capsys.readouterr().out
 
 
+def test_a_file_in_milestones_without_the_kind_field_is_refused_by_dispatch(
+    tmp_project, capsys
+):
+    """The kind gate applies to dispatch-agent too, not only set-status."""
+    from scripts.orchestrator import cmd_dispatch_agent
+
+    milestones = tmp_project / "docs" / "superpowers" / "milestones"
+    milestones.mkdir(parents=True, exist_ok=True)
+    path = milestones / "2026-07-28-milestone-2.md"
+    path.write_text('---\ntitle: "Oops"\nstatus: DRAFT_SPEC\n---\n\n# Oops\n', encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        cmd_dispatch_agent(
+            argparse.Namespace(role="planner", file=str(path), model=None)
+        )
+
+    assert "kind: milestone" in capsys.readouterr().out
+
+
 def test_closing_a_slice_ticks_it_in_every_brief_that_lists_it(tmp_project):
     """Closing a slice and updating the milestone are one command.
 
@@ -216,6 +235,29 @@ def test_a_failing_auto_sync_warns_but_does_not_reopen_the_slice(
 
     def boom(_path):
         raise ValidationError("markers missing")
+
+    monkeypatch.setattr(milestone_module, "sync_file", boom)
+
+    cmd_set_status(_args(plan_file, "VERIFIED_CLOSED"))
+
+    assert _status_of(plan_file) == "VERIFIED_CLOSED"
+    assert "Warning" in capsys.readouterr().out
+
+
+def test_an_os_error_during_auto_sync_warns_but_does_not_crash(
+    tmp_project, monkeypatch, capsys
+):
+    """A bare OSError (e.g. the brief is locked by another program on Windows,
+    or a permissions failure) must degrade the same way a ValidationError
+    does -- not escape as an uncaught traceback that skips the hook and the
+    sandbox teardown that follow in the same function."""
+    from scripts import milestone as milestone_module
+
+    _write_brief(tmp_project, status="MILESTONE_ACTIVE", entries="- [ ] slice-01-demo\n")
+    plan_file = _closeable_slice(tmp_project)
+
+    def boom(_path):
+        raise OSError("permission denied")
 
     monkeypatch.setattr(milestone_module, "sync_file", boom)
 

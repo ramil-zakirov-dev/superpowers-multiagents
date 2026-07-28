@@ -340,6 +340,20 @@ def test_the_operating_procedure_states_who_decides():
     assert "decides" in SKILL
 
 
+def test_skill_does_not_instruct_a_manual_checkbox_edit():
+    """The auto-sync (§3.4) retired the manual step; the prose must not revive it.
+
+    SKILL.md once told the human to "check off `[x]`" in the milestone brief
+    by hand, directly contradicting the Operating procedure table added later
+    in the same file, which says the same `set-status` command re-syncs every
+    brief listing the slice. That instruction is exactly the defect this
+    slice exists to retire.
+    """
+    lowered = SKILL.lower()
+    assert "check off `[x]`" not in lowered
+    assert "check off manually" not in lowered
+
+
 def test_package_json_version_matches_plugin_manifest():
     plugin = json.loads(
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")

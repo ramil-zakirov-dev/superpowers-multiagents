@@ -120,7 +120,8 @@ into the tracked plan file.
 ```bash
 python "<orchestrator>" set-status --file docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md --status VERIFIED_CLOSED
 ```
-And check off `[x]` in the corresponding Track in `docs/superpowers/milestones/YYYY-MM-DD-milestone-N.md`.
+The same command refreshes the `[x]` checkbox in every milestone brief that
+lists this slice — there is nothing to hand-edit.
 
 ### 6. Trigger Infrastructure Hooks
 ```bash

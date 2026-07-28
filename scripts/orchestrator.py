@@ -208,7 +208,7 @@ def cmd_set_status(args):
         try:
             milestone_mod.sync_file(brief)
             print(f"Refreshed {brief.name}.")
-        except OrchestratorError as exc:
+        except (OrchestratorError, OSError) as exc:
             print(f"Warning: could not refresh {brief.name}: {exc}")
 
     try:

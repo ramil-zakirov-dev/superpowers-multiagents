@@ -319,6 +319,12 @@ inherits that quirk. The documentation must not copy the warning across.
 | `dependencies.py` | "Closed" becomes a predicate over kind: `MILESTONE_CLOSED` for a milestone, `VERIFIED_CLOSED` for a slice. Without this, the already-supported `depends_on: [milestone-1]` would read a correctly closed milestone as permanently unmet. |
 | `cmd_status` | Milestones show their real status plus track progress: `[MILESTONE_ACTIVE ] 2026-07-28-milestone-1.md - Intake automation (3/7 slices closed)`. Slices are unchanged. |
 
+In the implementation, the kind gate runs after the pre-existing dependency-check
+gate rather than literally "before any gate" as drafted above. This is
+intentional: the dependency gate is read-only and creates no lock or worktree,
+so a milestone brief with a non-empty `depends_on` reports "[Dependency Gate]"
+instead of "[Kind Gate]" before being refused — a cosmetic difference only.
+
 No status name is added to `state_machine.valid_statuses`. A slice therefore
 cannot be set to `MILESTONE_CLOSED` and a milestone cannot be set to
 `EXECUTING`: each machine rejects the other's vocabulary at no extra cost.
