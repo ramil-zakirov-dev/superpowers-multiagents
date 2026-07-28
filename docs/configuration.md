@@ -97,6 +97,7 @@ sandbox:
 | `prompt_template` | string | Task prompt with `{file}` placeholder (see [Prompt templates](#prompt-templates-and-their-skill-dependency)) |
 | `extra_args` | list | Additional CLI flags (supports `{provider}` interpolation) |
 | `harness_adapter` | string | Path to a custom Python adapter file |
+| `skills` | list | Optional list of skill names appended to the role's prompt |
 
 ## Prompt templates and their skill dependency
 
@@ -119,6 +120,34 @@ for OpenCode, declare the plugin in `opencode.json`:
 
 If your harness has no equivalent, override `prompt_template` for each role with
 a prompt that spells out the discipline you want instead of naming a skill.
+
+## Skills (per-role reinforcement)
+
+A role may name skills the dispatched agent should use. The names are appended
+to the rendered `prompt_template` as one sentence, so a project never has to
+copy the plugin's default prompt in order to mention a skill — which would
+fork it permanently, since `deep_merge` replaces scalars.
+
+```yaml
+agents:
+  code_reviewer:
+    skills: [clean-architecture, domain-driven-design]
+```
+
+The plugin does not install skills and ships no default list. Getting them
+onto disk is the project's business, and a default would be destroyed rather
+than extended by any project that added one of its own, because `deep_merge`
+replaces lists wholesale.
+
+Before dispatch the orchestrator asks the harness adapter which skills it can
+see and prints a hint for any that it cannot. This is advisory: skills are
+reinforcement, not a dependency, and a missing one never blocks a dispatch. A
+malformed `skills` value is a different matter and fails closed.
+
+**For adapter authors:** `list_skills(agent_config, cwd)` returns a set of
+names, or `None` when the harness cannot be asked. Return `None` rather than
+an empty set unless you genuinely know the harness sees nothing — an empty set
+means every configured name is missing and will be reported as such.
 
 ## Milestone briefs
 

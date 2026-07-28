@@ -57,7 +57,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.3.0"
+    assert manifest["version"] == "2.4.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -160,6 +160,16 @@ def test_every_sandbox_config_key_is_documented():
             f"sandbox config key '{key}' is accepted by the loader but appears "
             f"nowhere in docs/configuration.md"
         )
+
+
+def test_every_known_agent_key_is_documented():
+    from scripts.config import KNOWN_AGENT_KEYS
+
+    undocumented = sorted(key for key in KNOWN_AGENT_KEYS if f"`{key}`" not in CONFIGURATION)
+    assert not undocumented, (
+        "these agent keys exist in the schema but appear nowhere in "
+        f"configuration.md: {undocumented}"
+    )
 
 
 def test_every_teardown_mode_is_documented():
@@ -361,7 +371,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.3.0"
+    assert plugin["version"] == package["version"] == "2.4.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
