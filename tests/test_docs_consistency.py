@@ -519,3 +519,24 @@ def test_dispatch_command_lists_exactly_the_configured_roles():
         f"dispatch.md lists {sorted(listed)}, configured roles are "
         f"{sorted(DEFAULT_CONFIG['agents'])}"
     )
+
+
+def test_new_milestone_splits_its_arguments_in_bash():
+    """The id/title split must not depend on undocumented quote handling.
+
+    `$1`/`$2` splitting is documented by example only; nothing states what
+    happens to a quoted multi-word argument. `$ARGUMENTS` is documented as the
+    whole string, and `cut` has defined semantics, so the split happens there.
+    """
+    body = (COMMANDS_DIR / "new-milestone.md").read_text(encoding="utf-8")
+    assert "$ARGUMENTS" in body, "new-milestone must take the whole argument string"
+    assert "$1" not in body, "positional splitting would break a multi-word title"
+    assert "cut -d' ' -f1" in body, "the id is the first word"
+    assert "cut -d' ' -f2-" in body, "the title is everything after it"
+
+
+def test_new_milestone_declares_the_tools_its_pipeline_needs():
+    """It is the one command whose invocation is not a bare `python` call."""
+    tools = command_frontmatter(COMMANDS_DIR / "new-milestone.md")["allowed-tools"]
+    for tool in ("Bash(python:*)", "Bash(echo:*)", "Bash(cut:*)"):
+        assert tool in tools, f"new-milestone does not declare {tool}"
