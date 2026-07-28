@@ -57,7 +57,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.2.0"
+    assert manifest["version"] == "2.3.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -361,7 +361,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.2.0"
+    assert plugin["version"] == package["version"] == "2.3.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
@@ -604,3 +604,15 @@ def test_every_command_file_is_named_by_the_procedure():
     assert on_disk - named == {"status"}, (
         f"commands not named by any procedure row: {sorted(on_disk - named - {'status'})}"
     )
+
+
+def test_readme_documents_every_command():
+    """A shipped command a user cannot discover may as well not exist."""
+    for path in command_files():
+        assert f"{COMMAND_PREFIX}{path.stem}" in README, (
+            f"README does not document {COMMAND_PREFIX}{path.stem}"
+        )
+
+
+def test_architecture_records_the_commands_directory():
+    assert "commands/" in ARCHITECTURE

@@ -25,6 +25,13 @@ scripts/
     └── loader.py             # Dynamic adapter resolution & custom loading
 ```
 
+Beyond `scripts/`, the plugin ships `commands/`: one Markdown file per slash
+command, each running a single orchestrator subcommand inline. They hold no
+logic and add no behaviour. `${CLAUDE_PLUGIN_ROOT}` inside them is expanded by
+the harness, so the path to the orchestrator is never derived at runtime — the
+one step of the lifecycle that used to depend on a model resolving a relative
+traversal correctly.
+
 ## Design Principles
 
 - **Single Responsibility**: Each module handles exactly one concern.

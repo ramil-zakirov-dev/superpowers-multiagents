@@ -355,16 +355,48 @@ No test invokes a real harness — dispatch tests wire in a stub adapter instead
 
 ---
 
+## ⌨️ Commands
+
+Available once the plugin is installed. Each wraps the CLI shown above; the
+orchestrator path inside them is expanded by the harness, so nothing derives
+it.
+
+| Command | Effect |
+| :--- | :--- |
+| `/superpowers-multiagents:status` | Read the state of every milestone, spec and plan |
+| `/superpowers-multiagents:new-milestone <id> <title>` | Create a milestone brief |
+| `/superpowers-multiagents:activate-milestone <brief>` | `MILESTONE_DRAFT` → `MILESTONE_ACTIVE` |
+| `/superpowers-multiagents:approve-spec <spec>` | `DRAFT_SPEC` → `SPEC_APPROVED` |
+| `/superpowers-multiagents:approve-plan <plan>` | `PLAN_GENERATED` → `PLAN_APPROVED` |
+| `/superpowers-multiagents:close-slice <plan>` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
+| `/superpowers-multiagents:close-milestone <brief>` | `MILESTONE_ACTIVE` → `MILESTONE_CLOSED` |
+| `/superpowers-multiagents:dispatch <role> <file>` | Dispatch a configured agent role |
+
+`milestone sync`, `milestone check`, `summary`, `trigger-hook` and `sandbox`
+have no commands — they are not steps of the operating procedure. Use the CLI.
+
+---
+
 ## 📁 Repository Structure
 
 ```
 superpowers-multiagents/
 ├── .claude-plugin/
-│   └── plugin.json             # Claude Code / Desktop plugin manifest
+│   ├── plugin.json             # Claude Code / Desktop plugin manifest
+│   └── marketplace.json        # Marketplace descriptor: this repo publishes itself
 ├── assets/
 │   ├── banner.png              # Project banner graphic
 │   ├── icon.png                # 24x24 project icon (PNG)
 │   └── icon.svg                # 24x24 project icon (SVG)
+├── commands/                   # Slash commands over the orchestrator CLI
+│   ├── status.md               # Read the whole lifecycle state
+│   ├── new-milestone.md        # Create a milestone brief
+│   ├── activate-milestone.md   # MILESTONE_DRAFT -> MILESTONE_ACTIVE
+│   ├── approve-spec.md         # DRAFT_SPEC -> SPEC_APPROVED
+│   ├── approve-plan.md         # PLAN_GENERATED -> PLAN_APPROVED
+│   ├── close-slice.md          # EXECUTION_COMPLETE -> VERIFIED_CLOSED
+│   ├── close-milestone.md      # MILESTONE_ACTIVE -> MILESTONE_CLOSED
+│   └── dispatch.md             # Dispatch a configured agent role
 ├── docs/
 │   ├── architecture.md         # Module structure & design principles
 │   └── configuration.md        # Full agents.yaml schema reference
