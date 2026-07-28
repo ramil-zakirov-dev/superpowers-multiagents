@@ -6,10 +6,12 @@ dispatched, owns no branch, and ends in `MILESTONE_CLOSED` when a human says the
 objective was met. Everything that differs between them lives here.
 """
 
+import datetime
 import re
 from pathlib import Path
 
 from scripts.errors import ValidationError
+from scripts.utils import _sanitize_id, atomic_write_text
 
 MILESTONE_KIND = "milestone"
 SLICE_KIND = "slice"
@@ -145,3 +147,104 @@ def missing_sections(text: str) -> list[str]:
         filled.add(current)
 
     return [section for section in REQUIRED_SECTIONS if section not in filled]
+
+
+TRACKS_BEGIN = "<!-- tracks:begin -->"
+TRACKS_END = "<!-- tracks:end -->"
+
+#: Separator between a track entry's slice_id and its machine-owned suffix:
+#: space, EM DASH (U+2014), space. `_sanitize_id` admits only alphanumerics,
+#: hyphens, underscores and dots, so a slice_id can never contain it and the
+#: split is unambiguous.
+SEPARATOR = " — "
+
+_TEMPLATE = """---
+kind: milestone
+milestone_id: "{milestone_id}"
+title: "{title}"
+status: MILESTONE_DRAFT
+---
+
+# {title}
+
+> A milestone is 1-3 months of work and 2-5 tracks. If you are describing a
+> screen or an endpoint, you are in the wrong document — that belongs in a
+> slice spec.
+
+## Problem
+
+<!-- Whose pain, and why now. Include what exists today and why it is
+     insufficient. No solution here. -->
+
+## Users
+
+<!-- Who, in which roles. If this milestone is internal infrastructure, name
+     the engineering roles it serves and say so in one line — an honest short
+     answer beats invented personas. -->
+
+## Goals
+
+<!-- What becomes true when the milestone is met. One numbered goal per line. -->
+
+## Non-goals
+
+<!-- Two labelled groups.
+     **Not in this milestone:** sequencing — we will, but later.
+     **Rejected outright:** a stance that outlives this milestone.
+     3-7 items; each names something a reasonable person would expect and we
+     are deliberately not doing. -->
+
+## Success metrics
+
+<!-- A table with one row per goal above, columns `Goal` and
+     `How we will know`. Add an `Overall` row for milestone-wide measures.
+     A metric nobody could disagree about having been met is not a metric. -->
+
+## Constraints & invariants
+
+<!-- What must not be violated. One line each. -->
+
+## Track decomposition
+
+<!-- One sentence on why this decomposition and not another. Write it here,
+     above the markers: the tracks below are `###` headings and do not count as
+     this section's content. -->
+
+{tracks_begin}
+### track-1: <name>
+depends_on: —
+{tracks_end}
+
+## Open questions
+
+<!-- What is unresolved, each with the name of whoever decides it. -->
+"""
+
+
+def render_template(milestone_id: str, title: str) -> str:
+    """The brief a `milestone new` writes: PRD form, every hint a comment."""
+    return _TEMPLATE.format(
+        milestone_id=milestone_id,
+        title=title,
+        tracks_begin=TRACKS_BEGIN,
+        tracks_end=TRACKS_END,
+    )
+
+
+def create(
+    directory: Path,
+    milestone_id: str,
+    title: str,
+    today: datetime.date | None = None,
+) -> Path:
+    """Write a new brief under `<directory>/milestones/`, never overwriting."""
+    _sanitize_id(milestone_id, "milestone_id")
+    stamp = (today or datetime.date.today()).isoformat()
+    target = Path(directory) / MILESTONES_DIRNAME / f"{stamp}-{milestone_id}.md"
+    if target.exists():
+        raise ValidationError(
+            f"{target} already exists. Edit it, or choose another --id."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(target, render_template(milestone_id, title))
+    return target

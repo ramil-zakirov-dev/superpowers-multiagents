@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import logging
+import tempfile
 from pathlib import Path
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
@@ -68,3 +69,20 @@ def _is_process_alive(pid: int) -> bool:
             return True
     except (OSError, ProcessLookupError):
         return False
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` to `path` via a staged temp file in the same directory.
+
+    A milestone brief is a tracked file that the orchestrator rewrites in
+    place. A crash halfway through a plain write would leave a truncated
+    document in the working tree; `os.replace` is atomic on both POSIX and
+    Windows, so the file is either the old one or the new one.
+    """
+    path = Path(path)
+    with tempfile.NamedTemporaryFile(
+        "w", dir=path.parent, delete=False, encoding="utf-8", newline=""
+    ) as handle:
+        handle.write(text)
+        staged = handle.name
+    os.replace(staged, path)

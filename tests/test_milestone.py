@@ -188,3 +188,81 @@ def test_a_level_three_heading_does_not_satisfy_its_parent_section():
     text = FILLED_BRIEF.replace("Split by ownership boundary.", "")
 
     assert "Track decomposition" in milestone.missing_sections(text)
+
+
+import datetime
+
+
+def test_the_template_contains_every_required_section():
+    text = milestone.render_template("milestone-1", "Intake automation")
+
+    for section in milestone.REQUIRED_SECTIONS:
+        assert f"## {section}" in text
+
+
+def test_a_fresh_template_reports_every_section_as_empty():
+    """The strongest statement that the hints are comments, not content.
+
+    If a hint were ever written as prose, this test goes red — which is the
+    only way to notice that the approval gate had quietly become a no-op.
+    """
+    text = milestone.render_template("milestone-1", "Intake automation")
+
+    assert milestone.missing_sections(text) == list(milestone.REQUIRED_SECTIONS)
+
+
+def test_the_template_declares_the_kind_and_the_draft_status():
+    from scripts.frontmatter import parse_frontmatter
+
+    data = parse_frontmatter(milestone.render_template("milestone-1", "Intake"))
+
+    assert data["kind"] == "milestone"
+    assert data["milestone_id"] == "milestone-1"
+    assert data["title"] == "Intake"
+    assert data["status"] == "MILESTONE_DRAFT"
+
+
+def test_the_template_carries_both_track_markers():
+    text = milestone.render_template("milestone-1", "Intake")
+
+    assert milestone.TRACKS_BEGIN in text
+    assert milestone.TRACKS_END in text
+    assert text.index(milestone.TRACKS_BEGIN) < text.index(milestone.TRACKS_END)
+
+
+def test_the_template_states_the_altitude():
+    """"High-level yet thorough" is a tension an author resolves downward."""
+    text = milestone.render_template("milestone-1", "Intake")
+
+    assert "slice spec" in text
+
+
+def test_create_writes_a_dated_file_and_returns_its_path(tmp_path):
+    path = milestone.create(
+        tmp_path, "milestone-1", "Intake", today=datetime.date(2026, 7, 28)
+    )
+
+    assert path == tmp_path / "milestones" / "2026-07-28-milestone-1.md"
+    assert path.read_text(encoding="utf-8").startswith("---")
+
+
+def test_create_refuses_to_overwrite(tmp_path):
+    from scripts.errors import ValidationError
+
+    milestone.create(tmp_path, "milestone-1", "Intake", today=datetime.date(2026, 7, 28))
+
+    with pytest.raises(ValidationError) as excinfo:
+        milestone.create(
+            tmp_path, "milestone-1", "Other", today=datetime.date(2026, 7, 28)
+        )
+
+    assert "already exists" in str(excinfo.value)
+
+
+def test_create_rejects_an_unsafe_id(tmp_path):
+    from scripts.errors import ValidationError
+
+    with pytest.raises(ValidationError):
+        milestone.create(
+            tmp_path, "../escape", "Intake", today=datetime.date(2026, 7, 28)
+        )

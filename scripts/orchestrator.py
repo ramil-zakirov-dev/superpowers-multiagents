@@ -27,6 +27,7 @@ from scripts.git_ops import create_git_worktree, current_branch, merge_and_clean
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
+from scripts import milestone as milestone_mod
 from scripts import sandbox
 from scripts.utils import find_project_root
 
@@ -470,6 +471,26 @@ def cmd_summary(args):
     print("\n".join(lines[-50:]))
 
 
+def cmd_milestone(args):
+    """Milestone brief lifecycle: create, sync track state, check completeness.
+
+    Unlike `sandbox`, flags come after the action in the ordinary way — that
+    command's flags-first constraint exists only because `exec --` needs
+    `argparse.REMAINDER`, and nothing here passes a command through.
+    """
+    if args.action == "new":
+        base_dir = Path(args.dir) if args.dir else Path("docs/superpowers")
+        try:
+            path = milestone_mod.create(base_dir, args.id, args.title)
+        except OrchestratorError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        print(f"Created {path}")
+        print("Fill every section, then run:")
+        print(f"  set-status --file {path} --status MILESTONE_ACTIVE")
+        return
+
+
 # ---------------------------------------------------------------------------
 # CLI argument parser
 # ---------------------------------------------------------------------------
@@ -529,6 +550,19 @@ def main():
     p_sandbox.add_argument("--yes", action="store_true", help="Confirm volume destruction")
     p_sandbox.add_argument("cmd", nargs=argparse.REMAINDER, help="Command for `exec`")
 
+    # milestone
+    p_milestone = subparsers.add_parser(
+        "milestone", help="Milestone brief lifecycle (new / sync / check)"
+    )
+    milestone_actions = p_milestone.add_subparsers(dest="action", required=True)
+
+    p_ms_new = milestone_actions.add_parser("new", help="Create a milestone brief")
+    p_ms_new.add_argument("--id", required=True, help="Milestone id, e.g. milestone-1")
+    p_ms_new.add_argument("--title", required=True, help="Milestone title")
+    p_ms_new.add_argument(
+        "--dir", default="docs/superpowers", help="Base superpowers directory"
+    )
+
     args = parser.parse_args()
 
     if args.command == "status":
@@ -551,6 +585,8 @@ def main():
         cmd_summary(args)
     elif args.command == "sandbox":
         cmd_sandbox(args)
+    elif args.command == "milestone":
+        cmd_milestone(args)
     else:
         parser.print_help()
 
