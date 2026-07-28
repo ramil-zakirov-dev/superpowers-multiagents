@@ -545,7 +545,13 @@ def test_new_milestone_splits_its_arguments_in_bash():
     assert "$ARGUMENTS" in body, "new-milestone must take the whole argument string"
     assert "$1" not in body, "positional splitting would break a multi-word title"
     assert "cut -d' ' -f1" in body, "the id is the first word"
-    assert "cut -d' ' -f2-" in body, "the title is everything after it"
+    assert "cut -s -d' ' -f2-" in body, (
+        "the title is everything after the id, and -s is load-bearing: without "
+        "it `cut` returns the whole line when there is no delimiter, so "
+        "`new-milestone milestone-2` would title the brief 'milestone-2' — a "
+        "plausible-looking fabrication in a tracked document rather than a "
+        "visibly empty field"
+    )
 
 
 def test_new_milestone_declares_the_tools_its_pipeline_needs():
