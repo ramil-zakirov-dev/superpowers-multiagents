@@ -121,15 +121,39 @@ Before writing a milestone brief (`docs/superpowers/milestones/`), a slice spec
    think, over anything that proposes its own route from work to release.
 3. Reason through the document with them. A lens that changed no sentence of
    the result was the wrong lens, or was never applied.
-4. Record the choice in the document's frontmatter under `lenses:`. The
-   orchestrator does not read this key — it is a note to the reviewer and to
-   Agent 2 at diff-audit time.
+4. Record the choice in the document's frontmatter under `lenses:`.
+
+When you OPEN a document that already declares `lenses:` — to audit it, to plan
+against it, or to pick the work back up — load those skills before reasoning
+about it, and say which ones you loaded. That declaration is how a lens survives
+from the session that chose it to the session that has to honour it. Nothing
+loads it for you.
 
 Installed for this project: <list your set here>.
 ```
 
 Keep that last line current. A name that no longer resolves produces no error
 anywhere along this path — the instruction simply has nothing to load.
+
+## What the `lenses:` key does, and what it cannot do
+
+On its own the key is inert: it is frontmatter, and no code in this plugin
+parses it. It becomes useful only because the block above gives it a reader —
+the rule that a session opening the document loads what the document declares.
+Written without that rule, the key is an audit note and nothing more.
+
+That leaves the dispatched half uncovered. When the planner is dispatched against
+a spec, the orchestrator parses that file's frontmatter for `status` and
+`depends_on`; it could read `lenses:` as well and merge the names into the role's
+`skills:` list, giving a slice its own lenses instead of only its role's. That
+would be a change to the plugin, not an instruction, and it is not implemented.
+Until it is, a lens intended for the planner or the executor belongs in
+`agents.yaml`.
+
+If you would rather not carry a key that only instructions honour, drop it. The
+lens still works; what you lose is the record of which one shaped the document
+and why — which is most of the value when someone reviews the spec six weeks
+later.
 
 ## Two ways this goes wrong
 
