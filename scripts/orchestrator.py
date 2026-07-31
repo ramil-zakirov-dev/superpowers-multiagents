@@ -52,6 +52,21 @@ def _warn_if_artifacts_not_ignored(project_root: Path) -> None:
         )
 
 
+def _warn_if_unpinned_lenses(lenses: list) -> None:
+    """Say so when a document cites a part without a version.
+
+    Advisory, exactly like an invisible skill. This plugin carries citations
+    and never resolves them, so it cannot know whether a reference is valid —
+    only whether it left off the one thing that keeps it meaning what it meant.
+    """
+    unpinned = skills_mod.unpinned_lenses(lenses)
+    if unpinned:
+        print(
+            "Hint: these lenses carry no version and will drift when their "
+            "upstream is rewritten: " + " ".join(unpinned)
+        )
+
+
 def _warn_if_invisible_skills(agent_config: dict, adapter, cwd: Path) -> None:
     """Say so when a configured skill is not visible to the harness.
 
@@ -352,9 +367,14 @@ def cmd_dispatch_agent(args):
     # strand the slice at in_progress_status with no legal way back.
     log_file = log_path(project_root, role, target_file.stem)
     prompt_template = agent_config.get("prompt_template", "Process {file}")
+    # The document's own citations travel with the role's skills: the agent is
+    # about to be dispatched *at* this file, and what it was written against is
+    # as much a part of the briefing as what the role is good at.
+    declared_lenses = skills_mod.declared_lenses(frontmatter)
     task_prompt = skills_mod.compose_prompt(
         prompt_template.format(file=target_file),
         skills_mod.declared_skills(agent_config),
+        declared_lenses,
     )
 
     isolated = agent_config.get("isolated_worktree", False)
@@ -444,6 +464,7 @@ def cmd_dispatch_agent(args):
     print(f"Dispatched {agent_config.get('model')} as {role} (supervisor PID {process.pid}).")
     print(f"Log: {log_file}")
     _warn_if_invisible_skills(agent_config, adapter, cwd)
+    _warn_if_unpinned_lenses(declared_lenses)
     _warn_if_artifacts_not_ignored(project_root)
 
 
