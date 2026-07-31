@@ -2,16 +2,64 @@
 
 ![Skill Lenses Banner](../assets/skill-lenses-banner.jpg)
 
-The `skills:` key reinforces the roles this plugin dispatches. It cannot reach
-the two it does not. This document covers that other half: how a project wires
-lens selection into its own `CLAUDE.md` so the milestone and slice architects
-choose deliberately instead of by accident.
+The `skills:` key in `agents.yaml` reinforces the roles this plugin dispatches.
+It cannot reach the two it does not. This document covers that other half: how a
+project wires lens selection into its own `CLAUDE.md` so the milestone and slice
+architects choose deliberately instead of by accident.
 
-Read it after **[Skills Worth Giving Your Agents](../README.md#-skills-worth-giving-your-agents)**,
-which covers what a lens is, where to get one, and how to install it. The
-mechanics of the key itself are in
-**[configuration.md](configuration.md#skills-per-role-reinforcement)**. Nothing
-below repeats either.
+Read it alongside **[Skills Worth Giving Your Agents](../README.md#-skills-worth-giving-your-agents)**,
+which covers where to get a lens and how to install it. The mechanics of the
+`agents.yaml` key are in
+**[configuration.md](configuration.md#skills-per-role-reinforcement)**. The
+definition below is the one place this document overlaps with the README on
+purpose; nothing after it repeats either.
+
+## What a lens is
+
+**This is local vocabulary.** "Lens" is shorthand used in this repository, not a
+term the Agent Skills ecosystem defines. Nothing installs, validates or resolves
+a lens: a lens is an ordinary skill, and the word describes only the job you
+hired it for. No harness will recognise it, and no catalogue is organised by it.
+
+A lens is a skill that supplies **vocabulary and criteria for judgement** — the
+Dependency Rule, bounded contexts, bulkheads and timeouts, diagnosis / guiding
+policy / coherent action. You load it to reason about one document, and what it
+changes is which sentences of that document you are willing to leave standing.
+
+The word earns its place by what it excludes. A **pipeline** is a skill that
+supplies its own route from work to release (`to-spec`, `to-tickets`,
+`implement`, `tdd`). It does not sharpen the state machine this plugin runs — it
+competes with it, and the model settles that conflict silently, without reporting
+which of the two it followed.
+
+| | Lens | Pipeline |
+|---|---|---|
+| Supplies | a way to think | a way to work |
+| Relation to this plugin | composes with it | competes with it — it *is* an orchestrator |
+| Evidence it was applied | the document reads differently | the run took a different route |
+| Safe number | two per document | one per project, and you already run it |
+
+The metaphor is doing real work: a lens adds nothing to the scene, it changes
+what you resolve in it. Two sharpen; five muddy.
+
+### Which problem this actually solves
+
+Three problems are usually named together when a session carries many skills.
+The word "lens" addresses one of them, and it is worth being precise about
+which — the other two have their own mechanisms, and crediting them here would
+buy you a false sense of coverage.
+
+| Problem | What actually handles it |
+|---|---|
+| **Attention dilution** — twenty behavioural rules are followed less faithfully than two | Deliberate selection. This is the one a lens is for, and the honest reason for the ceiling of two |
+| **Context cost** — instructions are not free | The format, not the choice. The harness keeps each skill's name and description in context and loads the body only on demand; picking a lens does not save those tokens, it spends them on purpose |
+| **Conflict with the orchestrator** — a skill that runs its own workflow | The lens/pipeline distinction. Not a budget problem at all, and the reason this pair of words exists rather than a general plea for restraint |
+
+> **Not the same as `SkillLens`.** A research framework of that name exists
+> ([arXiv 2605.08386](https://arxiv.org/abs/2605.08386)) covering multi-granularity
+> skill reuse to cut retrieval cost. Same word, different subject: it concerns
+> *how much of a skill* to load, not *which kind of skill* composes with the
+> workflow you already run.
 
 ## Why the strategic layer needs a different mechanism
 
@@ -78,8 +126,8 @@ to be wrong about it a month from now". Match the lens to that.
 | slice spec with operator-facing screens | Can someone tell what this does without being told? | `design-everyday-things`, `ux-heuristics` |
 | implementation plan | Are these tasks the right size, and will the code read well? | `clean-code`, `refactoring-patterns` |
 
-**Two is the ceiling.** A longer list dilutes attention rather than sharpening
-it — the same limit the README recommends per dispatched role.
+**Two is the ceiling**, for the reason given above, and the same limit the
+README recommends per dispatched role.
 
 ## Where to look
 
@@ -121,9 +169,11 @@ Before writing a milestone brief (`docs/superpowers/milestones/`), a slice spec
    think, over anything that proposes its own route from work to release.
 3. Reason through the document with them. A lens that changed no sentence of
    the result was the wrong lens, or was never applied.
-4. Record the choice in the document's frontmatter under `lenses:`.
+4. Record the choice in the document's frontmatter under `skills:` — the key
+   `agents.yaml` uses for a role, one scope down:
+   `skills: [clean-architecture, domain-driven-design]`.
 
-When you OPEN a document that already declares `lenses:` — to audit it, to plan
+When you OPEN a document that already declares `skills:` — to audit it, to plan
 against it, or to pick the work back up — load those skills before reasoning
 about it, and say which ones you loaded. That declaration is how a lens survives
 from the session that chose it to the session that has to honour it. Nothing
@@ -135,7 +185,12 @@ Installed for this project: <list your set here>.
 Keep that last line current. A name that no longer resolves produces no error
 anywhere along this path — the instruction simply has nothing to load.
 
-## What the `lenses:` key does, and what it cannot do
+## What a document's `skills:` key does, and what it cannot do
+
+The name is deliberate rather than new. `agents.yaml` already attaches skills to
+a role under `skills:`; a document's frontmatter attaches them to that document.
+One vocabulary, two scopes — and if the merge described below is ever built, it
+joins two like-named lists instead of translating between two words.
 
 On its own the key is inert: it is frontmatter, and no code in this plugin
 parses it. It becomes useful only because the block above gives it a reader —
@@ -144,11 +199,11 @@ Written without that rule, the key is an audit note and nothing more.
 
 That leaves the dispatched half uncovered. When the planner is dispatched against
 a spec, the orchestrator parses that file's frontmatter for `status` and
-`depends_on`; it could read `lenses:` as well and merge the names into the role's
-`skills:` list, giving a slice its own lenses instead of only its role's. That
-would be a change to the plugin, not an instruction, and it is not implemented.
-Until it is, a lens intended for the planner or the executor belongs in
-`agents.yaml`.
+`depends_on`; it could read the spec's `skills:` as well and merge those names
+into the role's list, giving a slice its own lenses instead of only its role's.
+That would be a change to the plugin, not an instruction, and it is not
+implemented. Until it is, a lens intended for the planner or the executor belongs
+in `agents.yaml`.
 
 If you would rather not carry a key that only instructions honour, drop it. The
 lens still works; what you lose is the record of which one shaped the document
@@ -157,11 +212,13 @@ later.
 
 ## Two ways this goes wrong
 
-**Taking a pipeline for a lens.** A skill carrying its own workflow competes
-with the state machine you already run, and the model resolves the conflict
-silently. The README states the rule of thumb: a description containing a
-workflow is one you already have; a description containing a vocabulary is one
-you probably want.
+**Taking a pipeline for a lens.** The distinction is clear on paper and blurred
+in a catalogue listing, where both arrive as one line of description. Apply the
+rule of thumb before installing: a description containing a workflow is one you
+already have; a description containing a vocabulary is one you probably want.
+The larger the bundle, the likelier it is the former — a repository shipping
+scores of skills alongside hooks and commands is a harness, whatever its README
+calls it.
 
 **Turning a lens into a checklist.** A lens changes how you reason; it does not
 hand you acceptance criteria. "Must pass an OWASP JWT check" belongs in a spec
