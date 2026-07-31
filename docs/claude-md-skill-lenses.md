@@ -107,11 +107,19 @@ Be clear about the guarantee you are buying:
 | Passive discovery | the harness scans its skills directories; each name and description enters the session | the model may never load it |
 | Named in an instruction | a line in `CLAUDE.md`, or the sentence `skills:` appends to a dispatch prompt | far likelier to be loaded — still the model's call |
 | Body injected | a `SessionStart` hook pasting the whole skill into context | present, no decision required; costs those tokens in every session |
+| Fetched by tool | a catalogue served over MCP, returning the part as a tool result | present once asked for, and only the part asked for; costs nothing in sessions that never ask |
 
-A `CLAUDE.md` directive is the middle tier. It is a strong nudge from the
+A `CLAUDE.md` directive is the second tier. It is a strong nudge from the
 highest-priority source of instructions, and it is not enforcement. Any claim
 that this makes quality deterministic is false — plan for a lens that gets
 skipped, and check the document it was supposed to shape.
+
+The fourth tier is the one worth understanding, because it dominates the third
+on both axes it is usually compared on. A hook pastes a whole skill into every
+session whether or not it is wanted; a tool returns one section, when asked,
+and nothing otherwise. What it costs instead is a running server and a decision
+to call it — which is why the instruction above still matters: the tool does not
+invoke itself.
 
 ## Choose by dominant risk, not by topic
 
@@ -169,15 +177,19 @@ Before writing a milestone brief (`docs/superpowers/milestones/`), a slice spec
    think, over anything that proposes its own route from work to release.
 3. Reason through the document with them. A lens that changed no sentence of
    the result was the wrong lens, or was never applied.
-4. Record the choice in the document's frontmatter under `skills:` — the key
-   `agents.yaml` uses for a role, one scope down:
-   `skills: [clean-architecture, domain-driven-design]`.
+4. Record the choice in the document's frontmatter under `lenses:`, one entry
+   per part, each pinned to a version:
 
-When you OPEN a document that already declares `skills:` — to audit it, to plan
-against it, or to pick the work back up — load those skills before reasoning
-about it, and say which ones you loaded. That declaration is how a lens survives
-from the session that chose it to the session that has to honour it. Nothing
-loads it for you.
+   ```yaml
+   lenses:
+     - wondelai/release-it#stability-anti-patterns@34ac73394a51
+     - ecc/hexagonal-architecture#architecture-boundaries@97016702dbd5
+   ```
+
+When you OPEN a document that declares `lenses:` — to audit it, to plan against
+it, or to pick the work back up — read those parts before reasoning about it,
+and say which ones you read. That declaration is how a lens survives from the
+session that chose it to the session that has to honour it.
 
 Installed for this project: <list your set here>.
 ```
@@ -185,28 +197,57 @@ Installed for this project: <list your set here>.
 Keep that last line current. A name that no longer resolves produces no error
 anywhere along this path — the instruction simply has nothing to load.
 
-## What a document's `skills:` key does, and what it cannot do
+## Why `lenses:` holds pinned parts, not skill names
 
-The name is deliberate rather than new. `agents.yaml` already attaches skills to
-a role under `skills:`; a document's frontmatter attaches them to that document.
-One vocabulary, two scopes — and if the merge described below is ever built, it
-joins two like-named lists instead of translating between two words.
+Two things changed the shape of this key.
 
-On its own the key is inert: it is frontmatter, and no code in this plugin
-parses it. It becomes useful only because the block above gives it a reader —
-the rule that a session opening the document loads what the document declares.
-Written without that rule, the key is an audit note and nothing more.
+**Skills are too big to cite.** A slice needing the section on grids should not
+receive the sections on error handling and testing along with it. So a citation
+names a *part* — `label/name#part@version` — and the granularity is the point.
 
-That leaves the dispatched half uncovered. When the planner is dispatched against
-a spec, the orchestrator parses that file's frontmatter for `status` and
-`depends_on`; it could read the spec's `skills:` as well and merge those names
-into the role's list, giving a slice its own lenses instead of only its role's.
-That would be a change to the plugin, not an instruction, and it is not
-implemented. Until it is, a lens intended for the planner or the executor belongs
-in `agents.yaml`.
+**Unpinned citations rot.** Upstream repositories get rewritten. A reference by
+name alone silently starts meaning different text, and it is the implementer
+who discovers this, quietly. The trailing version is the hash of the text as it
+was when the part was catalogued; without it the whole practice is a
+suggestion.
+
+That also settles a naming question this document got wrong once. The key was
+briefly `skills:`, to match the key `agents.yaml` uses for a role — one
+vocabulary, two scopes. That argument held while both held skill names. They no
+longer do: a role's `skills: [clean-architecture]` and a document's pinned part
+references are different types, and two same-named keys with different value
+types are worse than two differently-named ones.
+
+The name is loosely applied on purpose. A cited part may be a `reference` or a
+`pipeline` rather than a lens, and calling the key `lenses:` is therefore not
+strictly accurate. It stays because the name does work: `parts:` invites twenty
+entries, `lenses:` argues for two.
+
+## Who resolves a citation
+
+The parts live in a catalogue served over MCP — see
+[superpowers-using-lenses](https://github.com/ramil-zakirov-dev/superpowers-using-lenses),
+which cuts vendored skills into parts and exposes `find_lenses` and
+`get_lenses`. A session with that server configured resolves a `lenses:` entry
+by calling `get_lenses` with it.
+
+Which agents get the server is a per-project decision, and it decides where
+this works:
+
+| Agent | With MCP | Without |
+|---|---|---|
+| 1 and 2 (architect, auditor) | select and cite parts; read them back at diff-audit | nothing to select from |
+| 3 (planner) | resolves the spec's `lenses:` when it reads the spec | the spec's citations are inert prose to it |
+| 4 (executor) | usually unnecessary — the plan should already carry what it needs | fine |
+
+Granting the planner access is what closes the loop. Without it the plugin
+would have to grow code — the orchestrator already parses a spec's frontmatter
+for `status` and `depends_on` and could merge `lenses:` into the role's
+`skills:` list. That code is not written and, if the planner can call the
+server, need not be: this is a configuration decision rather than a feature.
 
 If you would rather not carry a key that only instructions honour, drop it. The
-lens still works; what you lose is the record of which one shaped the document
+lens still works; what you lose is the record of which part shaped the document
 and why — which is most of the value when someone reviews the spec six weeks
 later.
 
