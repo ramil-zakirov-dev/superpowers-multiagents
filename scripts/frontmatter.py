@@ -13,8 +13,12 @@ from scripts.utils import _to_plain_dict
 
 logger = logging.getLogger("orchestrator")
 
-# BOM-tolerant frontmatter pattern: strips optional UTF-8 BOM before ---
-FRONTMATTER_PATTERN = re.compile(r"^\ufeff?---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+# BOM-tolerant frontmatter pattern: strips optional UTF-8 BOM before ---.
+# The trailing runs match horizontal whitespace only. `\s*\n` would also eat
+# the blank line that conventionally follows the closing `---`, and the writer
+# below rebuilds the block from this match -- so a greedy class here deletes a
+# line of the document on every status change.
+FRONTMATTER_PATTERN = re.compile(r"^\ufeff?---[^\S\n]*\n(.*?)\n---[^\S\n]*\n", re.DOTALL)
 
 
 def parse_frontmatter(content: str) -> dict:
@@ -52,11 +56,23 @@ def update_frontmatter_status(
         return False
 
     try:
-        content = filepath.read_text(encoding="utf-8").lstrip("\ufeff")
+        # Read with newline="" so the document's own convention survives the
+        # round trip. read_text() would report every ending as "\n" and the
+        # write below would then stamp the host's os.linesep onto every line,
+        # turning a one-field edit into a whole-file diff on Windows.
+        with filepath.open(encoding="utf-8", newline="") as fh:
+            raw = fh.read().lstrip("\ufeff")
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        content = raw.replace("\r\n", "\n")
         match = FRONTMATTER_PATTERN.match(content)
 
         yaml = YAML(typ='rt')
         yaml.preserve_quotes = True
+        # Default width is 80, which folds a long title onto a continuation
+        # line. Rewriting a field this call was not asked to touch is a
+        # gratuitous diff, and reviewers stop reading status changes that
+        # carry them.
+        yaml.width = 4096
 
         if match:
             yaml_text = match.group(1)
@@ -85,7 +101,7 @@ def update_frontmatter_status(
 
         parent_dir = filepath.parent
         with tempfile.NamedTemporaryFile(
-            "w", dir=parent_dir, delete=False, encoding="utf-8"
+            "w", dir=parent_dir, delete=False, encoding="utf-8", newline=newline
         ) as tf:
             tf.write(new_content)
             temp_name = tf.name

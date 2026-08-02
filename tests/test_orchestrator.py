@@ -119,6 +119,54 @@ status: DRAFT_SPEC
         assert updated_data["status"] == "SPEC_APPROVED"
 
 
+def test_update_keeps_an_lf_document_on_lf():
+    """One field changes, so one line may change.
+
+    A text-mode write translates every "\\n" to os.linesep, which on Windows
+    turned each status change into a whole-file CRLF rewrite -- a six-line
+    edit landing as a twelve-thousand-line diff.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_file = Path(tmpdir) / "lf-spec.md"
+        spec_file.write_bytes(b"---\nstatus: DRAFT_SPEC\n---\n\n# Content\n\nBody.\n")
+
+        assert update_frontmatter_status(spec_file, "SPEC_APPROVED", _VALID, _TRANS) is True
+
+        raw = spec_file.read_bytes()
+        assert b"\r\n" not in raw
+        assert b"status: SPEC_APPROVED" in raw
+
+
+def test_update_keeps_a_crlf_document_on_crlf():
+    """The writer follows the document's convention, not the host's."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_file = Path(tmpdir) / "crlf-spec.md"
+        spec_file.write_bytes(
+            b"---\r\nstatus: DRAFT_SPEC\r\n---\r\n\r\n# Content\r\n\r\nBody.\r\n"
+        )
+
+        assert update_frontmatter_status(spec_file, "SPEC_APPROVED", _VALID, _TRANS) is True
+
+        raw = spec_file.read_bytes()
+        assert raw.count(b"\r\n") == raw.count(b"\n"), "a bare LF crept into a CRLF file"
+        assert b"status: SPEC_APPROVED" in raw
+
+
+def test_update_does_not_rewrap_the_fields_it_did_not_touch():
+    """ruamel's default width folds a long value onto a second line."""
+    title = (
+        b'title: "Orchestrator hardening: runnable entry point, supervised '
+        b'lifecycle, honest invariants"'
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_file = Path(tmpdir) / "long-title-spec.md"
+        spec_file.write_bytes(b"---\n" + title + b"\nstatus: DRAFT_SPEC\n---\n\n# Content\n")
+
+        assert update_frontmatter_status(spec_file, "SPEC_APPROVED", _VALID, _TRANS) is True
+
+        assert title in spec_file.read_bytes()
+
+
 def test_update_invalid_status():
     with tempfile.TemporaryDirectory() as tmpdir:
         spec_file = Path(tmpdir) / "test-spec-design.md"
