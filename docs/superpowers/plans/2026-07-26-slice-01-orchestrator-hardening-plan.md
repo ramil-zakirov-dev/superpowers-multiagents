@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-01-orchestrator-hardening"
 title: "Orchestrator hardening — TDD implementation plan"
-status: EXECUTION_COMPLETE
+status: VERIFIED_CLOSED
 spec: "docs/superpowers/specs/2026-07-26-slice-01-orchestrator-hardening-design.md"
 depends_on: []
 ---
