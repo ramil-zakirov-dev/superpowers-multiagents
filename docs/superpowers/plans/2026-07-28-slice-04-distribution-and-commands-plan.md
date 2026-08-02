@@ -1,8 +1,9 @@
 ---
 slice_id: "slice-04-distribution-and-commands"
-title: "Distribution and commands: make the plugin installable, and make the operating procedure executable"
-status: DRAFT_SPEC
+title: "Distribution and commands — implementation plan"
+status: PLAN_GENERATED
 target_version: "2.3.0"
+spec: "docs/superpowers/specs/2026-07-28-slice-04-distribution-and-commands-design.md"
 depends_on: []
 ---
 
