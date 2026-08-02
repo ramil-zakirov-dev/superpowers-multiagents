@@ -17,8 +17,42 @@ def _set_raw_status(spec, status):
     spec.write_text(text.replace("status: SPEC_APPROVED", f"status: {status}"), encoding="utf-8")
 
 
+def _with_line_endings(spec, ending):
+    """Rewrite the file so every line ends with `ending`, bytes verified."""
+    text = spec.read_text(encoding="utf-8")          # normalises to \n
+    spec.write_bytes(text.replace("\n", ending).encode("utf-8"))
+
+
 def test_plain_status_change_applies(tmp_project, demo_spec):
     cmd_set_status(argparse.Namespace(file=str(demo_spec), status="PLANNING"))
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLANNING"
+
+
+def test_an_lf_document_keeps_its_line_endings(tmp_project, demo_spec):
+    """Guards the `newline=` handed to the staged writer. Without it the write
+    stamps the host's os.linesep onto every line, so on Windows one status
+    change rewrites an entire LF document as CRLF. Every gate in the lifecycle
+    calls this, so the whole file would land in the diff at each transition."""
+    _with_line_endings(demo_spec, "\n")
+
+    cmd_set_status(argparse.Namespace(file=str(demo_spec), status="PLANNING"))
+
+    assert b"\r\n" not in demo_spec.read_bytes()
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLANNING"
+
+
+def test_a_crlf_document_keeps_its_line_endings(tmp_project, demo_spec):
+    """Guards the other half: reading with newline="" so the document's own
+    convention can be detected at all. Read through read_text() every ending
+    reports as \\n, the detection always concludes LF, and a CRLF project is
+    silently converted -- the same whole-file diff, for the other kind of
+    repository."""
+    _with_line_endings(demo_spec, "\r\n")
+
+    cmd_set_status(argparse.Namespace(file=str(demo_spec), status="PLANNING"))
+
+    raw = demo_spec.read_bytes()
+    assert raw.count(b"\r\n") == raw.count(b"\n"), "a bare LF survived"
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLANNING"
 
 
