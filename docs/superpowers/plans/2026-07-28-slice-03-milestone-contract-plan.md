@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-03-milestone-contract"
 title: "Milestone contract — implementation plan"
-status: EXECUTION_COMPLETE
+status: VERIFIED_CLOSED
 spec: "docs/superpowers/specs/2026-07-28-slice-03-milestone-contract-design.md"
 ---
 
