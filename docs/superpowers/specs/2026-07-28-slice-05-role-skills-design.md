@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-05-role-skills"
 title: "Role skills: let a project reinforce a dispatched agent with named skills, without forking the default prompt"
-status: DRAFT_SPEC
+status: PLAN_GENERATED
 target_version: "2.4.0"
 depends_on: []
 ---

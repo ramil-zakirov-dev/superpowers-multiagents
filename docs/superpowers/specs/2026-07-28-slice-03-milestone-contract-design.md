@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-03-milestone-contract"
 title: "Milestone contract: a second document kind with a PRD-shaped brief, its own lifecycle, and machine-owned track state"
-status: DRAFT_SPEC
+status: PLAN_GENERATED
 target_version: "2.2.0"
 depends_on: []
 ---

@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-04-distribution-and-commands"
 title: "Distribution and commands — implementation plan"
-status: PLAN_GENERATED
+status: EXECUTION_COMPLETE
 target_version: "2.3.0"
 spec: "docs/superpowers/specs/2026-07-28-slice-04-distribution-and-commands-design.md"
 depends_on: []

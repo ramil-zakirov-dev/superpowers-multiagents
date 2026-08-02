@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-02-native-sandbox"
 title: "Native sandbox — implementation plan"
-status: PLAN_GENERATED
+status: EXECUTION_COMPLETE
 spec: "docs/superpowers/specs/2026-07-27-slice-02-native-sandbox-design.md"
 ---
 
