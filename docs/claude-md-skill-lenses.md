@@ -171,12 +171,23 @@ Adjust the paths if you have moved the document tree.
 Before writing a milestone brief (`docs/superpowers/milestones/`), a slice spec
 (`docs/superpowers/specs/`) or a plan (`docs/superpowers/plans/`):
 
-1. State the document's dominant risk in one sentence — what is most likely to
-   be wrong about it in a month.
-2. Load at most two skills that address that risk. Prefer a lens, a way to
-   think, over anything that proposes its own route from work to release.
-3. Reason through the document with them. A lens that changed no sentence of
-   the result was the wrong lens, or was never applied.
+1. List the document's distinct knowledge needs — not risks to hedge against,
+   needs to fill. State each need-only, concrete enough that a stranger could
+   tell what you're about to get wrong without it: "guidance on keeping a
+   call to an external payment API from taking the whole service down", not
+   "circuit breaker". Know why each one matters — you want that for the
+   record in step 4 — but do not fold the why into the query text: "...
+   because I'm designing the checkout slice" measurably drags the match
+   toward whatever nouns that clause contains rather than the need. A
+   milestone brief or a slice touching several concerns has several needs,
+   not one broad query trying to cover all of them.
+2. Call `find_lenses_batch` once with the list of need statements
+   (`find_lenses` for a single need found later, mid-document). Prefer a
+   lens, a way to think, over anything that proposes its own route from
+   work to release.
+3. Reason through the document with what came back. A lens that changed no
+   sentence of the result was the wrong lens, or was never applied — that is
+   the actual limit on how many you keep, not a count fixed in advance.
 4. Record the choice in the document's frontmatter under `lenses:`, one entry
    per part, each pinned to a version:
 
@@ -220,16 +231,18 @@ types are worse than two differently-named ones.
 
 The name is loosely applied on purpose. A cited part may be a `reference` or a
 `pipeline` rather than a lens, and calling the key `lenses:` is therefore not
-strictly accurate. It stays because the name does work: `parts:` invites twenty
-entries, `lenses:` argues for two.
+strictly accurate. It stays because the name does work: `parts:` invites
+listing everything available; `lenses:` argues for what actually earned its
+place — a document with five genuine needs earns five, not two capped in
+advance and three left unmet.
 
 ## Who resolves a citation
 
 The parts live in a catalogue served over MCP — see
 [superpowers-using-lenses](https://github.com/ramil-zakirov-dev/superpowers-using-lenses),
-which cuts vendored skills into parts and exposes `find_lenses` and
-`get_lenses`. A session with that server configured resolves a `lenses:` entry
-by calling `get_lenses` with it.
+which cuts vendored skills into parts and exposes `find_lenses`,
+`find_lenses_batch` and `get_lenses`. A session with that server configured
+resolves a `lenses:` entry by calling `get_lenses` with it.
 
 Which agents get the server is a per-project decision, and it decides where
 this works:
