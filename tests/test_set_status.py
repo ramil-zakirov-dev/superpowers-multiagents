@@ -57,6 +57,34 @@ def test_verified_closed_merges_then_marks(tmp_project, demo_spec):
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "VERIFIED_CLOSED"
 
 
+def test_a_missing_branch_is_refused_rather_than_called_a_conflict(tmp_project, demo_spec):
+    """The defect: a slice with no branch to merge — one that landed
+    fast-forward, or whose branch was deleted once merged — was recorded as
+    MERGE_CONFLICT, because `git merge` exits non-zero for a missing ref just
+    as it does for a collision."""
+    _set_raw_status(demo_spec, "EXECUTION_COMPLETE")
+    _git(tmp_project, "add", "-A")
+    _git(tmp_project, "commit", "-qm", "wip")
+
+    with pytest.raises(SystemExit):
+        cmd_set_status(argparse.Namespace(file=str(demo_spec), status="VERIFIED_CLOSED"))
+
+    status = parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+    assert status == "EXECUTION_COMPLETE", "a refusal must leave the status alone"
+
+
+def test_skip_merge_closes_a_slice_that_already_landed(tmp_project, demo_spec):
+    _set_raw_status(demo_spec, "EXECUTION_COMPLETE")
+    _git(tmp_project, "add", "-A")
+    _git(tmp_project, "commit", "-qm", "wip")
+
+    cmd_set_status(
+        argparse.Namespace(file=str(demo_spec), status="VERIFIED_CLOSED", skip_merge=True)
+    )
+
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "VERIFIED_CLOSED"
+
+
 def test_conflict_lands_in_merge_conflict_not_verified_closed(tmp_project, demo_spec):
     """The defect: MERGE_CONFLICT was set from the terminal VERIFIED_CLOSED."""
     _set_raw_status(demo_spec, "EXECUTION_COMPLETE")

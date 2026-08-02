@@ -190,7 +190,7 @@ expanded by the harness, so nothing derives it.
 | `/superpowers-multiagents:activate-milestone <brief>` | `MILESTONE_DRAFT` → `MILESTONE_ACTIVE` |
 | `/superpowers-multiagents:approve-spec <spec>` | `DRAFT_SPEC` → `SPEC_APPROVED` |
 | `/superpowers-multiagents:approve-plan <plan>` | `PLAN_GENERATED` → `PLAN_APPROVED` |
-| `/superpowers-multiagents:close-slice <plan>` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
+| `/superpowers-multiagents:close-slice <plan> [--skip-merge]` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
 | `/superpowers-multiagents:close-milestone <brief>` | `MILESTONE_ACTIVE` → `MILESTONE_CLOSED` |
 | `/superpowers-multiagents:dispatch <role> <file>` | Dispatch a configured agent role |
 

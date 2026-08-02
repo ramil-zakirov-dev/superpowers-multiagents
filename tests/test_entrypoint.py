@@ -24,6 +24,13 @@ def test_module_invocation_works():
     assert result.returncode == 0, result.stderr
 
 
+def test_set_status_offers_skip_merge():
+    """cmd_set_status reads the flag, but only the parser can put it there."""
+    result = _run(["scripts/orchestrator.py", "set-status", "--help"], cwd=REPO_ROOT)
+    assert result.returncode == 0, result.stderr
+    assert "--skip-merge" in result.stdout
+
+
 def test_script_invocation_works_from_another_directory():
     """Installed as a plugin, cwd is the user's project, not the plugin root."""
     with tempfile.TemporaryDirectory() as tmp_dir:

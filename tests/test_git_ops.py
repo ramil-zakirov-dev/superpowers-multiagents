@@ -82,6 +82,43 @@ def test_merge_raises_when_the_tree_is_genuinely_dirty(repo):
         merge_and_cleanup_worktree("slice-01", repo)
 
 
+def test_merge_names_the_branch_it_cannot_find(repo):
+    """A ref that does not exist is not a merge conflict.
+
+    `git merge` exits non-zero for both, and reading every non-zero exit as a
+    conflict made close-slice stamp MERGE_CONFLICT on a slice that had shipped
+    cleanly and simply never had a branch.
+    """
+    with pytest.raises(GitError, match="feat/slice-99"):
+        merge_and_cleanup_worktree("slice-99", repo)
+
+
+def test_skip_merge_closes_a_slice_whose_branch_is_gone(repo):
+    """Deleting a branch once it is merged is ordinary hygiene, so refusing
+    outright would strand every tidily-landed slice."""
+    assert merge_and_cleanup_worktree("slice-99", repo, skip_merge=True) is True
+
+
+def test_skip_merge_brings_nothing_home(repo):
+    """The flag asserts the work is already in; it must not perform the merge
+    it was given permission to skip."""
+    worktree = create_git_worktree("slice-01", repo)
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-qm", "feat: add feature")
+
+    assert merge_and_cleanup_worktree("slice-01", repo, skip_merge=True) is True
+    assert not (repo / "feature.py").exists()
+    assert not worktree.exists()
+
+
+def test_skip_merge_does_not_gate_on_a_dirty_tree(repo):
+    """The dirty-tree gate guards the merge. With no merge there is nothing to
+    guard, and close-slice's own status write dirties the tree anyway."""
+    (repo / "uncommitted.py").write_text("x\n", encoding="utf-8")
+    assert merge_and_cleanup_worktree("slice-99", repo, skip_merge=True) is True
+
+
 def test_merge_returns_false_on_conflict(repo):
     worktree = create_git_worktree("slice-01", repo)
     (worktree / "README.md").write_text("branch side\n", encoding="utf-8")

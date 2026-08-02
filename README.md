@@ -475,12 +475,18 @@ it.
 | `/superpowers-multiagents:activate-milestone <brief>` | `MILESTONE_DRAFT` → `MILESTONE_ACTIVE` |
 | `/superpowers-multiagents:approve-spec <spec>` | `DRAFT_SPEC` → `SPEC_APPROVED` |
 | `/superpowers-multiagents:approve-plan <plan>` | `PLAN_GENERATED` → `PLAN_APPROVED` |
-| `/superpowers-multiagents:close-slice <plan>` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
+| `/superpowers-multiagents:close-slice <plan> [--skip-merge]` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
 | `/superpowers-multiagents:close-milestone <brief>` | `MILESTONE_ACTIVE` → `MILESTONE_CLOSED` |
 | `/superpowers-multiagents:dispatch <role> <file>` | Dispatch a configured agent role |
 
 `milestone sync`, `milestone check`, `summary`, `trigger-hook` and `sandbox`
 have no commands — they are not steps of the operating procedure. Use the CLI.
+
+`close-slice` merges `feat/<slice_id>` before it records the status, so it
+refuses when that branch does not exist. `--skip-merge` closes the slice
+without merging, for work that landed fast-forward or whose branch was deleted
+once merged. It is an assertion the orchestrator cannot check: pass it only
+when you know the work is already on the current branch.
 
 ---
 

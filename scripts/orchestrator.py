@@ -221,7 +221,12 @@ def cmd_set_status(args):
         sys.exit(1)
 
     try:
-        merged = merge_and_cleanup_worktree(slice_id, project_root)
+        # getattr, not args.skip_merge: cmd_set_status is called directly with
+        # a hand-built Namespace in several places, and a status change that
+        # merges nothing has no business demanding the flag be spelled out.
+        merged = merge_and_cleanup_worktree(
+            slice_id, project_root, skip_merge=getattr(args, "skip_merge", False)
+        )
     except OrchestratorError as exc:
         print(f"Error: {exc}")
         sys.exit(1)
@@ -667,6 +672,13 @@ def main():
     p_set = subparsers.add_parser("set-status", help="Set status of a markdown file")
     p_set.add_argument("--file", required=True, help="Path to markdown file")
     p_set.add_argument("--status", required=True, help="New status")
+    p_set.add_argument(
+        "--skip-merge",
+        action="store_true",
+        help="With VERIFIED_CLOSED: assert the slice already landed, so its "
+             "branch is not merged and need not exist. Nothing verifies the "
+             "claim; use it when the branch was deleted after merging.",
+    )
 
     # trigger-hook
     p_trigger = subparsers.add_parser("trigger-hook", help="Trigger an infrastructure hook manually")

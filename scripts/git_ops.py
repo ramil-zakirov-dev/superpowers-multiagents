@@ -68,28 +68,54 @@ def create_git_worktree(slice_id: str, project_root: Path) -> Path:
     return worktree_path
 
 
-def merge_and_cleanup_worktree(slice_id: str, project_root: Path) -> bool:
+def _branch_exists(branch_name: str, project_root: Path) -> bool:
+    """Whether `refs/heads/<branch_name>` resolves in this repository."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    return result.returncode == 0
+
+
+def merge_and_cleanup_worktree(
+    slice_id: str, project_root: Path, skip_merge: bool = False
+) -> bool:
     """Merge a slice branch into the current branch and drop its worktree.
 
     Returns True on success and False on merge conflict — a conflict is an
     expected outcome the caller records as a status. Raises GitError when the
-    tree is dirty, which is a precondition failure, not an outcome.
+    tree is dirty or when the branch does not exist; both are precondition
+    failures, not outcomes.
+
+    A missing branch used to be indistinguishable from a conflict, because
+    `git merge` exits non-zero either way. That misdiagnosis marked slices
+    MERGE_CONFLICT when they had in fact landed fast-forward and their branch
+    was tidied away — so `skip_merge` lets the operator state that the work is
+    already home. It is an assertion, not a guess: nothing here can verify it.
     """
     _sanitize_id(slice_id, "slice_id")
     branch_name = f"feat/{slice_id}"
     worktree_path = Path(project_root) / ".worktrees" / slice_id
 
-    if not check_working_tree_clean(project_root):
-        raise GitError(
-            "Working tree is dirty. Commit or stash your changes before merging."
-        )
+    if not skip_merge:
+        if not check_working_tree_clean(project_root):
+            raise GitError(
+                "Working tree is dirty. Commit or stash your changes before merging."
+            )
 
-    merged = subprocess.run(
-        ["git", "merge", branch_name],
-        cwd=project_root, capture_output=True, text=True,
-    )
-    if merged.returncode != 0:
-        return False
+        if not _branch_exists(branch_name, project_root):
+            raise GitError(
+                f"Branch '{branch_name}' does not exist, so there is nothing to "
+                f"merge. If the slice already landed and its branch was deleted, "
+                f"re-run with --skip-merge; otherwise check the slice_id."
+            )
+
+        merged = subprocess.run(
+            ["git", "merge", branch_name],
+            cwd=project_root, capture_output=True, text=True,
+        )
+        if merged.returncode != 0:
+            return False
 
     if worktree_path.exists():
         subprocess.run(
