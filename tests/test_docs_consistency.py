@@ -405,13 +405,19 @@ def test_marketplace_entry_matches_the_plugin_manifest():
     assert entry["description"] == manifest["description"]
 
 
-def test_marketplace_source_points_at_the_manifest_repository():
-    """A source pointing somewhere else installs someone else's code."""
+def test_marketplace_source_clones_the_manifest_repository_over_https():
+    """A source pointing somewhere else installs someone else's code.
+
+    The URL must be spelled out. A `github` source resolves to git@github.com
+    unless CLAUDE_CODE_PLUGIN_PREFER_HTTPS is set, and the installer clones
+    non-interactively — so every machine without a GitHub SSH key fails to
+    install a public plugin.
+    """
     entry = _marketplace()["plugins"][0]
     repository = _manifest()["repository"]
     assert repository.startswith("https://github.com/"), repository
-    expected = repository[len("https://github.com/"):].removesuffix(".git")
-    assert entry["source"] == {"source": "github", "repo": expected}
+    expected = repository.removesuffix(".git") + ".git"
+    assert entry["source"] == {"source": "url", "url": expected}
 
 
 def test_marketplace_category_is_a_real_one():
