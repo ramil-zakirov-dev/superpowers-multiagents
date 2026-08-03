@@ -1,0 +1,16 @@
+# Merged over DEFAULT_CONFIG (scripts/config.py) by deep_merge: only the keys
+# below are overridden, everything else — statuses, prompt templates, the
+# executor role — is inherited.
+agents:
+  planner:
+    # The dedicated Kimi subscription (KIMI_API_KEY), not the opencode-go
+    # aggregator (OPENCODE_API_KEY). Two reasons: the wider context window is
+    # what bounds plan quality, and the planner stops competing with the
+    # executor for one key's quota.
+    #
+    # The model id is provider-scoped: this provider calls K3 `k3` / `k3-256k`.
+    # `kimi-k3` is the opencode-go spelling and does not resolve here — the
+    # adapter only concatenates `<provider>/<model>`, so a wrong id fails at
+    # the CLI and lands the slice in FAILED.
+    provider: kimi-for-coding
+    model: k3-256k
