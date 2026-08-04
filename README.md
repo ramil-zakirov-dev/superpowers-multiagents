@@ -421,8 +421,9 @@ agents:
 
 `skills` is the only key set here, so `model`, `harness` and — importantly —
 `prompt_template` keep coming from the plugin's defaults and keep improving with
-it. Two per role is a good ceiling; a longer list dilutes attention rather than
-sharpening it.
+it. Name the lenses a role applies to its own decisions; there is no magic
+number. A lens that changed nothing in the output was the wrong lens, and that
+— not a count — is what limits the list.
 
 Which lens suits which role:
 
