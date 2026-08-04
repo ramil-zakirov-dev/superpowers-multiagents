@@ -1,10 +1,10 @@
 ---
 description: Dispatch a configured agent role against a document
 argument-hint: [role] [path-to-file]
-allowed-tools: Bash(python:*)
+allowed-tools: Bash(python:*), Bash(echo:*), Bash(cut:*)
 ---
 
-!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" dispatch-agent --role "$1" --file "$2"`
+!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" dispatch-agent --role "$(echo "$ARGUMENTS" | cut -d' ' -f1)" --file "$(echo "$ARGUMENTS" | cut -s -d' ' -f2-)"`
 
 Configured roles: `planner`, `executor`.
 

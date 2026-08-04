@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from scripts.adapters.loader import _BUILTIN_ADAPTERS
@@ -57,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.8.0"
+    assert manifest["version"] == "2.8.1"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -376,7 +377,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.8.0"
+    assert plugin["version"] == package["version"] == "2.8.1"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
@@ -575,11 +576,60 @@ def test_new_milestone_splits_its_arguments_in_bash():
     )
 
 
-def test_new_milestone_declares_the_tools_its_pipeline_needs():
-    """It is the one command whose invocation is not a bare `python` call."""
-    tools = command_frontmatter(COMMANDS_DIR / "new-milestone.md")["allowed-tools"]
-    for tool in ("Bash(python:*)", "Bash(echo:*)", "Bash(cut:*)"):
-        assert tool in tools, f"new-milestone does not declare {tool}"
+def test_no_command_takes_its_arguments_positionally():
+    """What `new-milestone`'s comment says, applied to every command.
+
+    Observed with plugin 2.5.0 on Claude Code: `activate-milestone <path>` ran
+    with `$1` empty, so `--file` resolved to the repository root and the
+    orchestrator read a directory. `dispatch <role> <path>` put the path in
+    `--role`. `new-milestone` was unaffected — it is the one command that was
+    already built on `$ARGUMENTS`.
+
+    A wrapper failing here is not a cosmetic bug: these commands *are* the
+    lifecycle gates, and an operator whose gate command fails is one keystroke
+    from editing `status:` by hand, which is what the state machine exists to
+    prevent and which leaves no trace.
+    """
+    offenders = [
+        path.name
+        for path in command_files()
+        if re.search(r'"?\$[12]"?', path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        f"these commands take arguments positionally: {offenders}. Use "
+        f"$ARGUMENTS — whole and quoted when the command takes one argument, "
+        f"split with `cut` when it takes two."
+    )
+
+
+def test_every_command_that_takes_arguments_reads_them_from_arguments():
+    """The other half: a command with an argument-hint must consume something."""
+    for path in command_files():
+        frontmatter = command_frontmatter(path)
+        if "argument-hint" not in frontmatter:
+            continue
+        body = path.read_text(encoding="utf-8")
+        assert "$ARGUMENTS" in body, (
+            f"{path.name} hints arguments ({frontmatter['argument-hint']}) but "
+            f"never reads $ARGUMENTS"
+        )
+
+
+def test_every_command_declares_the_tools_its_pipeline_needs():
+    """A command that splits `$ARGUMENTS` runs more than a bare `python` call.
+
+    Was specific to `new-milestone`, the only command that split its arguments
+    at the time. Two more do now, and an undeclared `cut` is a permission
+    refusal at the moment a lifecycle gate is being crossed.
+    """
+    for path in command_files():
+        body = path.read_text(encoding="utf-8")
+        tools = command_frontmatter(path).get("allowed-tools", "")
+        for binary in ("python", "echo", "cut"):
+            if f"{binary} " in body or f'"{binary}' in body:
+                assert f"Bash({binary}:*)" in tools, (
+                    f"{path.name} runs `{binary}` but does not declare it"
+                )
 
 
 COMMAND_PREFIX = "/superpowers-multiagents:"

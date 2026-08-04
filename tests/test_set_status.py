@@ -23,6 +23,30 @@ def _with_line_endings(spec, ending):
     spec.write_bytes(text.replace("\n", ending).encode("utf-8"))
 
 
+def test_a_path_that_is_not_a_file_is_refused_by_name(tmp_project, capsys):
+    """A wrapper that drops its argument used to land here as a traceback.
+
+    `--file` received a value resolving to the repository root, and read_text()
+    raised PermissionError on a directory — which names neither the command nor
+    the missing argument, and reads like a permissions problem on the project.
+    """
+    with pytest.raises(SystemExit):
+        cmd_set_status(argparse.Namespace(file=str(tmp_project), status="PLANNING"))
+
+    out = capsys.readouterr().out
+    assert "not a file" in out.lower()
+    assert str(tmp_project) in out
+
+
+def test_a_missing_file_is_refused_by_name(tmp_project, capsys):
+    missing = tmp_project / "docs" / "superpowers" / "specs" / "nope.md"
+
+    with pytest.raises(SystemExit):
+        cmd_set_status(argparse.Namespace(file=str(missing), status="PLANNING"))
+
+    assert "nope.md" in capsys.readouterr().out
+
+
 def test_plain_status_change_applies(tmp_project, demo_spec):
     cmd_set_status(argparse.Namespace(file=str(demo_spec), status="PLANNING"))
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLANNING"

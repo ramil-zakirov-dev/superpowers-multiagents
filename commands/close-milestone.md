@@ -4,7 +4,7 @@ argument-hint: [path-to-brief]
 allowed-tools: Bash(python:*)
 ---
 
-!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" set-status --file "$1" --status MILESTONE_CLOSED`
+!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" set-status --file "$ARGUMENTS" --status MILESTONE_CLOSED`
 
 The transition above has already been attempted; its output is included.
 
