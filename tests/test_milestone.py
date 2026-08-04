@@ -51,6 +51,30 @@ def test_a_slice_outside_milestones_is_accepted(tmp_path):
     milestone.check_kind_declaration(path, {"slice_id": "slice-01"})
 
 
+@pytest.mark.parametrize("kind", ["plan", "spec", "Slice"])
+def test_a_kind_the_machine_does_not_know_is_refused(tmp_path, kind):
+    """`is_closed` reads TERMINAL_STATUS[kind]; an unknown kind never closes.
+
+    `machine_for` meanwhile treats anything non-milestone as a slice, so an
+    invented kind is validated and advanced like a slice but can never satisfy
+    a dependency gate. Two functions disagreeing silently is the whole defect.
+    """
+    path = tmp_path / "plans" / "2026-08-04-demo-plan.md"
+    path.parent.mkdir(parents=True)
+    with pytest.raises(ValidationError) as excinfo:
+        milestone.check_kind_declaration(path, {"kind": kind, "slice_id": "demo"})
+    assert kind in str(excinfo.value)
+    assert "slice" in str(excinfo.value) and "milestone" in str(excinfo.value)
+
+
+def test_no_kind_at_all_stays_a_slice(tmp_path):
+    """The default is what makes `kind` opt-in; refusing absence is a migration."""
+    path = tmp_path / "plans" / "2026-08-04-demo-plan.md"
+    path.parent.mkdir(parents=True)
+    milestone.check_kind_declaration(path, {"slice_id": "demo"})
+    assert milestone.document_kind({"slice_id": "demo"}) == milestone.SLICE_KIND
+
+
 def test_the_milestone_machine_has_three_states_and_no_failed():
     """No agent is dispatched against a milestone, so no exit code, no FAILED."""
     assert milestone.MILESTONE_STATUSES == [

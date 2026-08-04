@@ -44,6 +44,14 @@ TERMINAL_STATUS = {
     MILESTONE_KIND: "MILESTONE_CLOSED",
 }
 
+#: Every kind the machine can actually govern. There is no `kind: plan` and no
+#: `kind: spec`: a spec and its plan are two documents of the same slice, which
+#: is why they share a `slice_id`. Naming one invents a kind that `machine_for`
+#: silently treats as a slice while `TERMINAL_STATUS` has no terminal status
+#: for it — so the document validates, advances, and can never satisfy a
+#: dependency gate. Checked at both gates rather than left to be discovered.
+KNOWN_KINDS = frozenset(TERMINAL_STATUS)
+
 #: The directory name whose contents are expected to declare `kind: milestone`.
 MILESTONES_DIRNAME = "milestones"
 
@@ -69,7 +77,21 @@ def check_kind_declaration(path: Path, frontmatter: dict) -> None:
 
     The converse is deliberately unguarded: a correctly declared milestone
     works wherever it is stored.
+
+    A declared kind outside `KNOWN_KINDS` is refused first, wherever the file
+    lives: the machine has no state for it, and the failure it otherwise
+    produces surfaces at some later gate as an unmet dependency with no
+    explanation.
     """
+    declared = frontmatter.get("kind")
+    if declared is not None and declared not in KNOWN_KINDS:
+        raise ValidationError(
+            f"{path} declares `kind: {declared}`, which this machine has no "
+            f"state for. The only kinds are {sorted(KNOWN_KINDS)} — a spec and "
+            f"its plan are both documents of the same slice and declare no "
+            f"kind at all. Remove the line, or correct it."
+        )
+
     if Path(path).parent.name != MILESTONES_DIRNAME:
         return
     if document_kind(frontmatter) == MILESTONE_KIND:
