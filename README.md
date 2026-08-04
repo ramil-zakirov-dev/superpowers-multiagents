@@ -348,6 +348,21 @@ The same absolute-path form works for every command below — `dispatch-agent`,
 `set-status`, `trigger-hook`, `summary` — not just `status`; it's shown once
 here for brevity.
 
+The report lists the documents the state machine can act on, and answers three
+different questions in three different ways:
+
+| The document | The report |
+| :--- | :--- |
+| carries a real status | one row, as always |
+| carries a status or `kind` the machine does not have | one row marked `INVALID`, saying which — never hidden, because nothing will ever move it |
+| carries no `status:` at all | counted, not listed: it predates the pipeline or was never meant to enter it |
+
+That last line is what keeps the report readable in a repository with history.
+Adopting the plugin into one does not mean backfilling frontmatter into every
+document you have ever written — writing a lifecycle state onto a closed
+historical design doc would be a claim about it that is not true. Pass `--all`
+when you do want to see them.
+
 ### 3. Start a Milestone
 
 ```bash
