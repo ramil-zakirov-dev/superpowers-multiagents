@@ -1,6 +1,7 @@
 """Dispatch with a sandbox configured. Never touches a real harness or docker."""
 
 import argparse
+import subprocess
 import time
 
 from scripts.orchestrator import cmd_dispatch_agent
@@ -101,6 +102,13 @@ def test_parallel_slices_get_distinct_stacks(tmp_project, stub_docker):
             f'---\nslice_id: "{slice_id}"\nstatus: SPEC_APPROVED\n---\n\n# x\n',
             encoding="utf-8",
         )
+    # An isolated role's worktree is made from HEAD; an uncommitted spec would
+    # not be in it, and the dispatch is refused for exactly that reason.
+    subprocess.run(["git", "add", "-A"], cwd=tmp_project, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "specs"], cwd=tmp_project, capture_output=True
+    )
+    for slice_id in ("slice-alpha", "slice-beta"):
         cmd_dispatch_agent(_args(specs / f"{slice_id}.md"))
 
     calls = _up_calls(stub_docker)

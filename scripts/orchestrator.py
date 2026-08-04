@@ -23,7 +23,13 @@ from scripts.config import load_agent_config, resolve_agent, validate_config
 from scripts.dependencies import check_unmet_dependencies
 from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
-from scripts.git_ops import create_git_worktree, current_branch, merge_and_cleanup_worktree
+from scripts.git_ops import (
+    branch_exists,
+    create_git_worktree,
+    current_branch,
+    is_tracked_at_head,
+    merge_and_cleanup_worktree,
+)
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
@@ -65,6 +71,26 @@ def _warn_if_unpinned_lenses(lenses: list) -> None:
         print(
             "Hint: these lenses carry no version and will drift when their "
             "upstream is rewritten: " + " ".join(unpinned)
+        )
+
+
+def _warn_if_near_miss_branch(slice_id: str, project_root: Path) -> None:
+    """Say so when a hand-made `feature/<slice_id>` sits beside our own.
+
+    Branch creation here is mechanical — `feat/<slice_id>`, derived from
+    frontmatter — but the habit it competes with is a branch per slice, named by
+    hand. The two differ by three characters, and only one of them is what
+    `close-slice` merges; the other lingers looking like unfinished work.
+
+    Advisory, because both branches existing is confusing rather than wrong,
+    and only the human knows which one holds the work.
+    """
+    near_miss = f"feature/{slice_id}"
+    if branch_exists(near_miss, project_root):
+        print(
+            f"Hint: '{near_miss}' also exists. This pipeline owns "
+            f"'feat/{slice_id}' and merges only that one at close-slice — if "
+            f"your work is on the other branch, move it over."
         )
 
 
@@ -353,6 +379,24 @@ def cmd_dispatch_agent(args):
     slice_id = frontmatter.get("slice_id", target_file.stem)
     current_status = frontmatter.get("status", "UNKNOWN")
 
+    # An isolated role's worktree is `git worktree add ... HEAD`, so it contains
+    # what HEAD committed and nothing else. Dispatching one at a document that
+    # is not in HEAD hands the agent a path to a file it cannot open — and the
+    # failure arrives much later, in the harness's own words.
+    if agent_config.get("isolated_worktree") and not is_tracked_at_head(
+        target_file, project_root
+    ):
+        print(
+            f"[Worktree Gate] Cannot dispatch {role} for {target_file.name}: it is "
+            f"not committed on '{current_branch(project_root)}', the branch this "
+            f"dispatch forks from."
+        )
+        print(
+            f"   {role} runs in .worktrees/{slice_id}, created from HEAD, so it "
+            f"would not contain this file. Commit it on the current branch first."
+        )
+        sys.exit(1)
+
     allowed_statuses = agent_config.get("allowed_statuses") or []
     if allowed_statuses and current_status not in allowed_statuses:
         print(f"[State Validation] Cannot dispatch {role} for {target_file.name}.")
@@ -486,6 +530,7 @@ def cmd_dispatch_agent(args):
     print(f"Log: {log_file}")
     _warn_if_invisible_skills(agent_config, adapter, cwd)
     _warn_if_unpinned_lenses(declared_lenses)
+    _warn_if_near_miss_branch(slice_id, project_root)
     _warn_if_artifacts_not_ignored(project_root)
 
 
