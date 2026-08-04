@@ -68,7 +68,26 @@ def create_git_worktree(slice_id: str, project_root: Path) -> Path:
     return worktree_path
 
 
-def _branch_exists(branch_name: str, project_root: Path) -> bool:
+def is_tracked_at_head(path: Path, project_root: Path) -> bool:
+    """Whether HEAD's tree carries this file.
+
+    An isolated role's worktree is created from HEAD, so this is the difference
+    between a document the agent can open and a path that is simply not there.
+    A repository with no commits yet answers False, which is the truthful answer
+    for the same reason.
+    """
+    try:
+        relative = Path(path).resolve().relative_to(Path(project_root).resolve())
+    except ValueError:
+        return False
+    result = subprocess.run(
+        ["git", "ls-tree", "--name-only", "HEAD", "--", relative.as_posix()],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def branch_exists(branch_name: str, project_root: Path) -> bool:
     """Whether `refs/heads/<branch_name>` resolves in this repository."""
     result = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}"],
@@ -103,7 +122,7 @@ def merge_and_cleanup_worktree(
                 "Working tree is dirty. Commit or stash your changes before merging."
             )
 
-        if not _branch_exists(branch_name, project_root):
+        if not branch_exists(branch_name, project_root):
             raise GitError(
                 f"Branch '{branch_name}' does not exist, so there is nothing to "
                 f"merge. If the slice already landed and its branch was deleted, "

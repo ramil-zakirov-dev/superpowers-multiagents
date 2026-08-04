@@ -204,6 +204,33 @@ feat/slice-03-other-feature                     127.0.0.140  stopped
 
 ---
 
+## 🌿 Branches and Worktrees — the Plugin Owns Both
+
+Branch creation here is **mechanical**, not a habit you bring with you. Three
+rules follow from one command, `git worktree add -b feat/<slice_id>
+.worktrees/<slice_id> HEAD`:
+
+**Do not create a slice branch by hand.** The dispatcher derives
+`feat/<slice_id>` from the document's frontmatter. A hand-made
+`feature/<slice_id>` is a *different* branch three characters away, and
+`close-slice` merges only the derived one — the other lingers looking like
+unfinished work. `dispatch-agent` prints a hint when it sees both.
+
+**Commit specs and plans on the branch checked out in the main working tree
+before dispatching.** That branch is what the planner reads (it has
+`isolated_worktree: false` and runs in the project root) and what the executor's
+worktree forks from. An uncommitted document is not in HEAD, so it is not in the
+worktree: dispatching an isolated role at one is refused, by name, rather than
+handed to an agent that will fail later for a reason it cannot explain. In the
+normal case the branch you commit on is your integration branch.
+
+**`.worktrees/<slice_id>` belongs to the plugin.** Do not create, move or delete
+it yourself; `close-slice` removes it after the merge, and a failed dispatch
+leaves it in place on purpose, so the transcript and the work are still there to
+read.
+
+---
+
 ## 🗂 Runtime Artifacts
 
 The orchestrator writes into the project it operates on. Everything it creates
