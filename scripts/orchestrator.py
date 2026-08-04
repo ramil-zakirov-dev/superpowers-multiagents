@@ -19,7 +19,12 @@ if __package__ in (None, ""):  # invoked as a script rather than `-m`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.adapters import get_harness_adapter
-from scripts.config import load_agent_config, resolve_agent, validate_config
+from scripts.config import (
+    DEFAULT_CONFIG,
+    load_agent_config,
+    resolve_agent,
+    validate_config,
+)
 from scripts.dependencies import check_unmet_dependencies
 from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
@@ -123,9 +128,55 @@ def _warn_if_invisible_skills(agent_config: dict, adapter, cwd: Path) -> None:
 # Command handlers
 # ---------------------------------------------------------------------------
 
+#: What the report calls a document that names a state the machine has no
+#: transition for. Distinct from an unadopted document on purpose: this one
+#: claims to be in the machine, so nothing will ever move it.
+INVALID_LABEL = "INVALID"
+
+
+def _classify_document(filepath: Path, frontmatter: dict, config: dict):
+    """(label, note) for one document, or (None, note) when it is unadopted.
+
+    Three outcomes, because `UNKNOWN` was three facts wearing one word:
+
+    * no `status:` at all — the document predates the pipeline or was never
+      meant to enter it. Not a defect, and there can be hundreds; the caller
+      counts these instead of printing them.
+    * a `status:` or `kind:` the machine does not have — a defect, and one the
+      owner has to fix by hand, so it is never hidden.
+    * anything else — a real state, printed as it always was.
+    """
+    status = frontmatter.get("status")
+    if not status:
+        return None, ""
+
+    kind = milestone_mod.document_kind(frontmatter)
+    if kind not in milestone_mod.KNOWN_KINDS:
+        return INVALID_LABEL, (
+            f"declares kind: {kind}, which is not "
+            f"{' or '.join(sorted(milestone_mod.KNOWN_KINDS))}"
+        )
+
+    valid_statuses, _ = milestone_mod.machine_for(kind, config)
+    if status not in valid_statuses:
+        return INVALID_LABEL, f"status: {status} is not a {kind} status"
+    return status, ""
+
+
 def cmd_status(args):
     """Scans and displays status of milestones, specs, and plans."""
     base_dir = Path(args.dir) if args.dir else Path("docs/superpowers")
+    # `all` postdates this function's other callers, and a Namespace built
+    # without it must still work — the same reason cmd_dispatch_agent reads
+    # `model` this way.
+    show_all = getattr(args, "all", False)
+
+    try:
+        config = load_agent_config(find_project_root(base_dir.resolve()))
+    except OrchestratorError:
+        # A report is a read. An unusable config is worth reporting elsewhere,
+        # not worth refusing to say what is on disk.
+        config = DEFAULT_CONFIG
 
     print("\n=======================================================")
     print("   SUPERPOWERS MULTI-AGENTS STATUS REPORT")
@@ -134,33 +185,41 @@ def cmd_status(args):
     for folder_name in ["milestones", "specs", "plans"]:
         folder_path = base_dir / folder_name
         print(f"--- {folder_name.upper()} ({folder_path}) ---")
-        if not folder_path.exists():
-            print("  (Directory not found)\n")
-            continue
 
-        md_files = sorted(list(folder_path.glob("*.md")))
+        md_files = sorted(folder_path.glob("*.md")) if folder_path.is_dir() else []
         if not md_files:
-            print("  (No files found)\n")
+            print("  (none)\n")
             continue
 
+        unadopted = []
         for filepath in md_files:
             text = filepath.read_text(encoding="utf-8")
             data = parse_frontmatter(text)
-            status = data.get("status", "UNKNOWN")
+            label, note = _classify_document(filepath, data, config)
+            if label is None and not show_all:
+                unadopted.append(filepath)
+                continue
+
             title = data.get("title", filepath.stem)
-            suffix = ""
+            suffix = f" — {note}" if note else ""
             if milestone_mod.document_kind(data) == milestone_mod.MILESTONE_KIND:
                 try:
                     resolve = milestone_mod.slice_resolver(
                         milestone_mod.search_dirs_for(filepath), exclude=filepath
                     )
                     closed, total = milestone_mod.progress(text, resolve)
-                    suffix = f" ({closed}/{total} slices closed)"
+                    suffix += f" ({closed}/{total} slices closed)"
                 except OrchestratorError:
                     # A brief without markers is still worth listing; a broken
                     # one must not take the whole report down with it.
-                    suffix = " (track state unavailable)"
-            print(f"  [{status:<18}] {filepath.name} - {title}{suffix}")
+                    suffix += " (track state unavailable)"
+            print(f"  [{(label or 'no status'):<18}] {filepath.name} - {title}{suffix}")
+
+        if unadopted:
+            print(
+                f"  ({len(unadopted)} documents carry no lifecycle status and are "
+                f"not adopted into the pipeline; --all lists them)"
+            )
         print()
 
 
@@ -742,6 +801,10 @@ def main():
     # status
     p_status = subparsers.add_parser("status", help="Show status of all milestones, specs, and plans")
     p_status.add_argument("--dir", default="docs/superpowers", help="Base superpowers directory")
+    p_status.add_argument(
+        "--all", action="store_true",
+        help="Also list documents that carry no lifecycle status",
+    )
 
     # set-status
     p_set = subparsers.add_parser("set-status", help="Set status of a markdown file")
