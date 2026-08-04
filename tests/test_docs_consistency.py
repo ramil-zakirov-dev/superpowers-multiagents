@@ -57,7 +57,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.5.1"
+    assert manifest["version"] == "2.6.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -221,9 +221,12 @@ def _documented_agent_blocks():
 def test_documented_agent_defaults_match_the_code():
     """The doc's default block is read as the defaults; drift makes it a lie.
 
-    Roles the docs invent to illustrate a point (`reviewer`) are not in
-    DEFAULT_CONFIG and are skipped — only the roles the plugin actually
-    ships are held to equality.
+    Two kinds of block are not that, and are skipped. Roles the docs invent to
+    illustrate a point (`reviewer`) are not in DEFAULT_CONFIG. And a key the
+    plugin ships no default for — `skills`, `instructions` — can only be an
+    example of a project override, since there is no default for it to
+    contradict; holding those to equality would forbid the docs from showing a
+    shipped role being configured at all.
     """
     checked = 0
     for agents in _documented_agent_blocks():
@@ -232,6 +235,8 @@ def test_documented_agent_defaults_match_the_code():
                 continue
             actual = DEFAULT_CONFIG["agents"][role]
             for key, value in documented.items():
+                if key not in actual:
+                    continue
                 assert actual.get(key) == value, (
                     f"docs/configuration.md documents {role}.{key} as {value!r}, "
                     f"but DEFAULT_CONFIG has {actual.get(key)!r}"
@@ -371,7 +376,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.5.1"
+    assert plugin["version"] == package["version"] == "2.6.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test

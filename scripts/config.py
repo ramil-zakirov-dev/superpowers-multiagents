@@ -144,6 +144,7 @@ KNOWN_AGENT_KEYS = frozenset({
     "extra_args",
     "harness_adapter",
     "skills",
+    "instructions",
 })
 
 
@@ -221,6 +222,16 @@ def validate_config(config: dict) -> None:
                         f"agent '{role}'.skills contains {entry!r}: every skill "
                         f"name must be a non-empty string."
                     )
+
+        instructions = agent.get("instructions")
+        if instructions is not None and not isinstance(instructions, str):
+            raise ConfigError(
+                f"agent '{role}'.instructions must be a single string, got "
+                f"{type(instructions).__name__}. A list is the common slip: "
+                f"these are prose rules appended to the role's prompt, not "
+                f"named items, so write them as one YAML block scalar "
+                f"(`instructions: |`)."
+            )
 
     sandbox = config.get("sandbox") or {}
     unknown_keys = set(sandbox) - KNOWN_SANDBOX_KEYS

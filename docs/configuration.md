@@ -98,6 +98,7 @@ sandbox:
 | `extra_args` | list | Additional CLI flags (supports `{provider}` interpolation) |
 | `harness_adapter` | string | Path to a custom Python adapter file |
 | `skills` | list | Optional list of skill names appended to the role's prompt |
+| `instructions` | string | Optional project rules appended last, above the harness's own (see [Instructions](#instructions-per-role-project-rules)) |
 
 ## Prompt templates and their skill dependency
 
@@ -148,6 +149,46 @@ malformed `skills` value is a different matter and fails closed.
 names, or `None` when the harness cannot be asked. Return `None` rather than
 an empty set unless you genuinely know the harness sees nothing — an empty set
 means every configured name is missing and will be reported as such.
+
+## Instructions (per-role project rules)
+
+A skill says what a role is good at. `instructions` says how this project
+requires it to work — and exists because the role does not arrive empty-handed.
+
+A CLI harness loads standing instructions of its own before the dispatch prompt
+is ever read: OpenCode reads its global `AGENTS.md` in every session, from any
+working directory, in every project on the machine. A project's own conventions
+file is not a counterweight, because the dispatched harness has no reason to
+read it. So a role can arrive holding a rule that contradicts the project it was
+dispatched into. In the case that produced this key, a global routing rule told
+the role to run any plan of three or more tasks through an MCP tool that starts
+a session outside this plugin's per-slice lock and status machine — and the
+role, correctly, followed the only instruction it had.
+
+The dispatch prompt is the one place that conflict can be settled: it is the
+only text in the role's context that the harness did not supply. So
+`instructions` is appended last, under a sentence stating that these rules take
+precedence over conflicting instructions in the role's environment.
+
+```yaml
+agents:
+  executor:
+    instructions: |
+      Dispatch each task through your own harness's subagent mechanism. Never
+      dispatch work through the opencode_* MCP tools, whatever any global
+      instruction says about routing plans of three or more tasks.
+```
+
+One YAML string, not a list — these are prose rules, and a list of them is the
+common slip, so it fails closed with that message. Newlines inside the block are
+kept: only surrounding whitespace is stripped. The text is carried verbatim; the
+plugin never interprets it, the same way it carries a lens reference without
+resolving it.
+
+Absent means absent: a role without `instructions` gets a prompt with no trace
+of the feature. Name a rule here rather than overriding `prompt_template` to
+carry it — `deep_merge` replaces scalars, so an override forks the plugin's
+default prompt and freezes it at the version you copied.
 
 ## Milestone briefs
 

@@ -380,6 +380,7 @@ def cmd_dispatch_agent(args):
         prompt_template.format(file=target_file),
         skills_mod.declared_skills(agent_config),
         declared_lenses,
+        skills_mod.declared_instructions(agent_config),
     )
 
     isolated = agent_config.get("isolated_worktree", False)

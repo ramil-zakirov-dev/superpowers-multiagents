@@ -153,6 +153,25 @@ def test_malformed_skills_is_refused(value):
     assert "planner" in str(excinfo.value)
 
 
+def test_instructions_key_is_accepted():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["agents"]["executor"]["instructions"] = "Never dispatch through MCP tools."
+    validate_config(config)          # must not raise
+
+
+@pytest.mark.parametrize("value", [
+    ["a rule", "another rule"],      # a list is the likely slip, by analogy with skills
+    7,
+    {"rule": "no"},
+])
+def test_malformed_instructions_is_refused(value):
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["agents"]["executor"]["instructions"] = value
+    with pytest.raises(ConfigError) as excinfo:
+        validate_config(config)
+    assert "executor" in str(excinfo.value)
+
+
 def _with_sandbox(**overrides):
     import copy
     config = copy.deepcopy(DEFAULT_CONFIG)

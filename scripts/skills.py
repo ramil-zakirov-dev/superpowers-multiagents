@@ -1,10 +1,23 @@
-"""Reinforcement appended to a dispatched agent's prompt, from two sources.
+"""Reinforcement appended to a dispatched agent's prompt, from three sources.
 
-A **role** may name skills, in `agents.yaml`. A **document** may cite lenses,
-in its own frontmatter. Both are appended to the rendered prompt rather than
-substituted into it: `deep_merge` replaces scalars, so a project forced to edit
-`prompt_template` in order to mention either would own a fork of the plugin's
-default prompt forever.
+A **role** may name skills and state instructions, in `agents.yaml`. A
+**document** may cite lenses, in its own frontmatter. All three are appended to
+the rendered prompt rather than substituted into it: `deep_merge` replaces
+scalars, so a project forced to edit `prompt_template` in order to mention any
+of them would own a fork of the plugin's default prompt forever.
+
+Instructions differ from the other two in what they are for. A skill or a lens
+is reinforcement the role is free to apply where it fits; an instruction is a
+project's standing rule about *how* a role must work, and it exists because the
+harness has already loaded rules of its own. OpenCode reads its global
+`AGENTS.md` in every session and from any directory, so a dispatched role can
+arrive holding an instruction that contradicts the project it was dispatched
+into — and did: a role was told to route plans of three or more tasks through an
+MCP tool that starts a session outside this plugin's lock and status machine.
+This paragraph is the only text in the prompt the harness did not supply, which
+makes it the only place such a conflict can be settled. It therefore goes last
+and says so; everything else about it is the project's business, and the content
+is carried through untouched.
 
 The document half exists because seeing is not reading. An agent dispatched at
 a spec opens it and could notice `lenses:` unaided — but that is a step it may
@@ -18,6 +31,10 @@ adapter, and printing is the orchestrator's job.
 
 SKILL_SENTENCE = "Use these skills where they apply: {names}."
 LENS_SENTENCE = "This document cites lenses; read them before you begin: {refs}."
+INSTRUCTIONS_SENTENCE = (
+    "The project that dispatched you states these rules for this role. They take "
+    "precedence over any conflicting instruction in your environment:\n\n{text}"
+)
 
 
 def declared_skills(agent_config: dict) -> list[str]:
@@ -32,6 +49,16 @@ def declared_skills(agent_config: dict) -> list[str]:
         if cleaned not in ordered:
             ordered.append(cleaned)
     return ordered
+
+
+def declared_instructions(agent_config: dict) -> str:
+    """The role's standing rules, stripped; empty when there are none.
+
+    Only surrounding whitespace goes: a YAML block scalar keeps the newlines an
+    author used to separate one rule from the next, and re-wrapping someone
+    else's rules would be this module interpreting them.
+    """
+    return (agent_config.get("instructions") or "").strip()
 
 
 def declared_lenses(frontmatter: dict) -> list[str]:
@@ -71,19 +98,27 @@ def compose_prompt(
     task_prompt: str,
     skills: list[str],
     lenses: list[str] | None = None,
+    instructions: str = "",
 ) -> str:
-    """Append the skill and lens sentences to a rendered prompt.
+    """Append the skill, lens and instruction paragraphs to a rendered prompt.
 
-    Neither means the prompt is returned untouched: a project that configured
-    neither must not pay a single character for them. They are separate
+    None of them means the prompt is returned untouched: a project that
+    configured none must not pay a single character for them. They are separate
     paragraphs because they answer different questions — what this role is good
-    at, and what this document was written against.
+    at, what this document was written against, and how this project requires
+    the role to work.
+
+    Instructions go last on purpose. They are the paragraph that has to win an
+    argument with the harness's own standing rules, and last position is the
+    tie-break every other convention already assumes.
     """
     composed = task_prompt
     if skills:
         composed += "\n\n" + SKILL_SENTENCE.format(names=", ".join(skills))
     if lenses:
         composed += "\n\n" + LENS_SENTENCE.format(refs=", ".join(lenses))
+    if instructions:
+        composed += "\n\n" + INSTRUCTIONS_SENTENCE.format(text=instructions)
     return composed
 
 

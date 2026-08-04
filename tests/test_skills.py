@@ -6,7 +6,12 @@ import pytest
 
 from scripts.adapters.base import HarnessAdapter
 from scripts.adapters.opencode import OpenCodeAdapter
-from scripts.skills import compose_prompt, declared_skills, invisible_skills
+from scripts.skills import (
+    compose_prompt,
+    declared_instructions,
+    declared_skills,
+    invisible_skills,
+)
 
 
 def test_declared_skills_absent_is_empty():
@@ -32,6 +37,39 @@ def test_compose_prompt_appends_one_paragraph():
         "Read the spec.\n\n"
         "Use these skills where they apply: clean-architecture, clean-code."
     )
+
+
+def test_declared_instructions_absent_is_empty():
+    assert declared_instructions({"model": "kimi-k3"}) == ""
+
+
+def test_declared_instructions_strips_surrounding_whitespace():
+    assert declared_instructions({"instructions": "  Never do X.\n"}) == "Never do X."
+
+
+def test_declared_instructions_treats_a_blank_value_as_absent():
+    assert declared_instructions({"instructions": "   \n"}) == ""
+
+
+def test_compose_prompt_without_instructions_is_unchanged():
+    assert compose_prompt("Read the spec.", [], None, "") == "Read the spec."
+
+
+def test_compose_prompt_carries_instructions_verbatim():
+    composed = compose_prompt("Task.", [], None, "First line.\nSecond line.")
+    assert "First line.\nSecond line." in composed
+
+
+def test_compose_prompt_frames_instructions_as_outranking_the_environment():
+    """Last position alone does not tell a role which rule wins a conflict."""
+    composed = compose_prompt("Task.", [], None, "Never do X.")
+    assert "precedence" in composed
+
+
+def test_compose_prompt_puts_instructions_after_skills_and_lenses():
+    composed = compose_prompt("Task.", ["clean-code"], ["vendor/lens#part@abc"], "Never do X.")
+    assert composed.index("Use these skills") < composed.index("cites lenses")
+    assert composed.index("cites lenses") < composed.index("Never do X.")
 
 
 def test_invisible_skills_reports_only_the_missing_ones():

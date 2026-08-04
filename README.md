@@ -299,6 +299,12 @@ reinforcement, not a replacement for `prompt_template`. See
 the schema, and **[Skills Worth Giving Your Agents](#-skills-worth-giving-your-agents)**
 below for which skills to install and where to find them.
 
+A role can also carry `instructions` — your project's rules for how that role
+must work, appended last and above whatever standing instructions the harness
+loaded on its own (OpenCode reads a global `AGENTS.md` in every session, and it
+can contradict the project it was dispatched into). See
+[docs/configuration.md](docs/configuration.md#instructions-per-role-project-rules).
+
 ### 2. Check Workflow Status
 
 From a clone:
