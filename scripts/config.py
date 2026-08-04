@@ -51,7 +51,18 @@ DEFAULT_CONFIG = {
             "in_progress_status": "PLANNING",
             "success_status": "PLAN_GENERATED",
             "isolated_worktree": False,
-            "prompt_template": "Read spec at {file} and create detailed TDD implementation plan using writing-plans skill. Save to docs/superpowers/plans/",
+            "produces": "plans",
+            "prompt_template": (
+                "Read the spec at {file} and create a detailed TDD implementation plan "
+                "using the writing-plans skill. Save it in docs/superpowers/plans/.\n\n"
+                "The plan must open with exactly this YAML frontmatter, before its first "
+                "heading — the pipeline reads that block, and a plan without it is "
+                "invisible to the state machine and cannot pass its next gate:\n\n"
+                "{frontmatter}\n\n"
+                "Do not create a git branch, and do not instruct the implementer to "
+                "create one: the dispatcher owns branches and worktrees, and derives the "
+                "branch name itself."
+            ),
             "extra_args": []
         },
         "executor": {
@@ -145,6 +156,7 @@ KNOWN_AGENT_KEYS = frozenset({
     "harness_adapter",
     "skills",
     "instructions",
+    "produces",
 })
 
 
@@ -222,6 +234,14 @@ def validate_config(config: dict) -> None:
                         f"agent '{role}'.skills contains {entry!r}: every skill "
                         f"name must be a non-empty string."
                     )
+
+        produces = agent.get("produces")
+        if produces is not None and not isinstance(produces, str):
+            raise ConfigError(
+                f"agent '{role}'.produces must be the name of the directory the "
+                f"role's document lands in (for example `plans`), got "
+                f"{type(produces).__name__}."
+            )
 
         instructions = agent.get("instructions")
         if instructions is not None and not isinstance(instructions, str):

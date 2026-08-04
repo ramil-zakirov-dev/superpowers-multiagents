@@ -7,6 +7,11 @@ from scripts.paths import log_path
 from scripts.runner import main, run_supervised
 
 
+#: A planner that actually did its job: it left a plan the machine can read.
+#: Exiting 0 stopped being enough when the artifact check landed.
+DID_ITS_JOB = [sys.executable, "-B", "-c", "import stub_agent"]
+
+
 def _set_status(spec, status):
     text = spec.read_text(encoding="utf-8")
     spec.write_text(text.replace("status: SPEC_APPROVED", f"status: {status}"), encoding="utf-8")
@@ -27,9 +32,25 @@ def _supervise(tmp_project, demo_spec, argv):
     return code, lock_file, log_file
 
 
+def test_success_needs_the_artifact_not_just_a_zero_exit(tmp_project, demo_spec):
+    """The observed failure: a planner that ran fine and left nothing readable.
+
+    Recording PLAN_GENERATED here would hand the next gate a slice whose plan
+    the state machine cannot see, and the natural repair at that point is to
+    write frontmatter by hand — which this pipeline's own rules forbid.
+    """
+    _set_status(demo_spec, "PLANNING")
+    code, _, log_file = _supervise(
+        tmp_project, demo_spec, [sys.executable, "-c", "print('a plan, in my head')"]
+    )
+    assert code == 0
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
+    assert "left no document the pipeline can see" in log_file.read_text(encoding="utf-8")
+
+
 def test_success_sets_success_status(tmp_project, demo_spec):
     _set_status(demo_spec, "PLANNING")
-    code, _, _ = _supervise(tmp_project, demo_spec, [sys.executable, "-c", "print('done')"])
+    code, _, _ = _supervise(tmp_project, demo_spec, DID_ITS_JOB)
     assert code == 0
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_GENERATED"
 
@@ -118,7 +139,7 @@ def _write_hook(tmp_project, event_name, sentinel_name):
 def test_completion_hook_fires_on_success(tmp_project, demo_spec):
     _set_status(demo_spec, "PLANNING")
     _write_hook(tmp_project, "on_planner_complete", "complete-fired.txt")
-    _supervise(tmp_project, demo_spec, [sys.executable, "-c", "pass"])
+    _supervise(tmp_project, demo_spec, DID_ITS_JOB)
     assert (tmp_project / "complete-fired.txt").exists()
 
 
@@ -158,7 +179,7 @@ def test_failing_hook_does_not_overwrite_the_recorded_status(tmp_project, demo_s
         f"hooks:\n  on_planner_complete:\n    command: {sys.executable} {script.name}\n",
         encoding="utf-8",
     )
-    code, _, log_file = _supervise(tmp_project, demo_spec, [sys.executable, "-c", "pass"])
+    code, _, log_file = _supervise(tmp_project, demo_spec, DID_ITS_JOB)
     assert code == 0
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_GENERATED"
     assert "completion hook failed" in log_file.read_text(encoding="utf-8")

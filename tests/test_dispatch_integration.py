@@ -94,8 +94,9 @@ def test_dispatch_runs_the_agent_and_reaches_a_terminal_status(tmp_project, demo
 def test_dispatch_writes_a_non_empty_log(tmp_project, demo_spec):
     cmd_dispatch_agent(_args(demo_spec))
     log_file = log_path(tmp_project, "planner", demo_spec.stem)
-    assert _wait_for(lambda: log_file.exists() and log_file.stat().st_size > 0)
-    assert "stub ok" in log_file.read_text(encoding="utf-8")
+    assert _wait_for(
+        lambda: log_file.exists() and "stub ok" in log_file.read_text(encoding="utf-8")
+    ), "the agent's own output never reached the log"
 
 
 def test_dispatch_releases_the_lock_when_the_agent_finishes(tmp_project, demo_spec):
@@ -106,10 +107,14 @@ def test_dispatch_releases_the_lock_when_the_agent_finishes(tmp_project, demo_sp
 def test_dispatch_artifacts_do_not_dirty_the_tree(tmp_project, demo_spec):
     cmd_dispatch_agent(_args(demo_spec))
     _wait_for(lambda: not lock_path(tmp_project, "slice-01-demo").exists())
-    # The spec file itself is a tracked modification; discard it, then only
-    # orchestrator artifacts remain.
+    # Two things the agent legitimately left behind are not orchestrator
+    # artifacts and are not what this test is about: the spec's status change
+    # (tracked) and the plan it was dispatched to write (untracked). Clear both,
+    # and whatever still dirties the tree is ours.
     import subprocess
     subprocess.run(["git", "checkout", "--", "."], cwd=tmp_project, capture_output=True)
+    for plan in (tmp_project / "docs" / "superpowers" / "plans").glob("*.md"):
+        plan.unlink()
     assert check_working_tree_clean(tmp_project) is True
 
 

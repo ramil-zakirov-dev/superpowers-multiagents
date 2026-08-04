@@ -27,7 +27,24 @@ class StubAdapter(HarnessAdapter):
     """Emits a harmless command instead of calling a real harness."""
 
     def build_command(self, agent_config, task_prompt):
-        return [sys.executable, "-c", agent_config.get("model", "print('stub ok')")]
+        # -B: the stub agent is imported by name, and a __pycache__ beside it
+        # would dirty the project tree that one test asserts stays clean.
+        return [sys.executable, "-B", "-c", agent_config.get("model", "print('stub ok')")]
+'''
+
+#: What a successful planner does, now that exiting 0 is not enough: it leaves a
+#: plan the state machine can read. Imported by name (`python -c "import
+#: stub_agent"`) so the agents.yaml value stays a plain YAML scalar.
+STUB_AGENT = '''
+import pathlib
+
+plans = pathlib.Path("docs/superpowers/plans")
+plans.mkdir(parents=True, exist_ok=True)
+(plans / "2026-07-26-slice-01-demo-plan.md").write_text(
+    \'---\\nslice_id: "slice-01-demo"\\nstatus: PLAN_GENERATED\\n---\\n\\n# Demo Plan\\n\',
+    encoding="utf-8",
+)
+print("stub ok")
 '''
 
 STUB_DOCKER = '''
@@ -96,6 +113,7 @@ def tmp_project(tmp_path):
     (tmp_path / "stub_adapter.py").write_text(
         STUB_ADAPTER.format(repo_root=str(REPO_ROOT)), encoding="utf-8"
     )
+    (tmp_path / "stub_agent.py").write_text(STUB_AGENT, encoding="utf-8")
 
     specs = tmp_path / "docs" / "superpowers" / "specs"
     specs.mkdir(parents=True)
@@ -107,7 +125,7 @@ def tmp_project(tmp_path):
     (tmp_path / ".superpowers" / "agents.yaml").write_text(
         "agents:\n"
         "  planner:\n"
-        "    model: \"print('stub ok')\"\n"
+        "    model: 'import stub_agent'\n"
         "    harness_adapter: 'stub_adapter.py'\n"
         "    isolated_worktree: false\n",
         encoding="utf-8",

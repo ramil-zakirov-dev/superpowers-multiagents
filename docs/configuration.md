@@ -54,7 +54,15 @@ agents:
     in_progress_status: PLANNING
     success_status: PLAN_GENERATED
     isolated_worktree: false
-    prompt_template: 'Read spec at {file} and create detailed TDD implementation plan using writing-plans skill. Save to docs/superpowers/plans/'
+    produces: plans
+    prompt_template: |-
+      Read the spec at {file} and create a detailed TDD implementation plan using the writing-plans skill. Save it in docs/superpowers/plans/.
+
+      The plan must open with exactly this YAML frontmatter, before its first heading — the pipeline reads that block, and a plan without it is invisible to the state machine and cannot pass its next gate:
+
+      {frontmatter}
+
+      Do not create a git branch, and do not instruct the implementer to create one: the dispatcher owns branches and worktrees, and derives the branch name itself.
     extra_args: []
 
   executor:
@@ -99,6 +107,7 @@ sandbox:
 | `harness_adapter` | string | Path to a custom Python adapter file |
 | `skills` | list | Optional list of skill names appended to the role's prompt |
 | `instructions` | string | Optional project rules appended last, above the harness's own (see [Instructions](#instructions-per-role-project-rules)) |
+| `produces` | string | Optional sibling directory the role's document lands in, e.g. `plans` (see [Produced documents](#produced-documents)) |
 
 ## Prompt templates and their skill dependency
 
@@ -149,6 +158,57 @@ malformed `skills` value is a different matter and fails closed.
 names, or `None` when the harness cannot be asked. Return `None` rather than
 an empty set unless you genuinely know the harness sees nothing — an empty set
 means every configured name is missing and will be reported as such.
+
+## Produced documents
+
+A role that writes a document writes it for the state machine as much as for the
+human reading it: `set-status` refuses a transition on frontmatter it cannot
+parse, and a slice's documents are found by their `slice_id`. A plan that opens
+at its own H1 is a good plan the pipeline cannot see — and the gap surfaces one
+gate later, where the obvious repair is to type frontmatter by hand.
+
+`produces` names the sibling directory the role's document lands in, and turns
+that contract into two things the role cannot get wrong by accident.
+
+```yaml
+agents:
+  planner:
+    produces: plans          # docs/superpowers/specs/… -> docs/superpowers/plans/
+```
+
+**Before the run**, `{frontmatter}` in the role's `prompt_template` renders the
+exact block the document must open with, built from the source document — the
+same `slice_id`, its `milestone_id` if it has one, and the role's
+`success_status`. The default planner template uses it, so the requirement
+arrives as literal text rather than as something to infer.
+
+**After the run**, exiting 0 is no longer enough. The supervisor looks for a
+document in that directory carrying this slice's `slice_id` and a `status:`; if
+there is none, the slice goes to `FAILED` with the reason in the log instead of
+to the role's success status. Failing where the work happened is much cheaper
+than failing at the next human gate.
+
+A single directory name, always a sibling of the source document's own — a path
+is refused. Absent means no contract and no check. The check is skipped for a
+role with `isolated_worktree: true`, whose output lives in an unmerged worktree
+where the main tree is the wrong place to look; the log says when it skipped.
+
+Note there is no `kind:` in the rendered block. A spec and its plan are two
+documents of the *same* slice, which is why they share a `slice_id`; `kind` has
+exactly two values, `slice` (the default, rarely written) and `milestone`, and
+declaring anything else is refused at both gates.
+
+### Prompt template tokens
+
+| Token | Value |
+|-------|-------|
+| `{file}` | Absolute path of the document being dispatched against |
+| `{slice_id}` | The slice's id, from frontmatter or the filename |
+| `{frontmatter}` | The block a produced document must open with; empty when the role declares no `produces` |
+
+Unused tokens cost a template nothing. A template that mentions none of them is
+still valid — but note that a literal `{` in a template is interpolation syntax
+and will fail the dispatch.
 
 ## Instructions (per-role project rules)
 
