@@ -28,6 +28,7 @@ from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
 from scripts import milestone as milestone_mod
+from scripts import produced
 from scripts import sandbox
 from scripts import skills as skills_mod
 from scripts.utils import find_project_root
@@ -372,12 +373,26 @@ def cmd_dispatch_agent(args):
     # strand the slice at in_progress_status with no legal way back.
     log_file = log_path(project_root, role, target_file.stem)
     prompt_template = agent_config.get("prompt_template", "Process {file}")
+    # The contract the role's own output has to satisfy. A role that produces
+    # nothing gets an empty block; its template does not mention one, and an
+    # unused key costs a template nothing.
+    produced_frontmatter = ""
+    if agent_config.get("produces"):
+        produced_frontmatter = produced.frontmatter_block(
+            slice_id,
+            frontmatter.get("milestone_id") or "",
+            agent_config.get("success_status") or "",
+        )
     # The document's own citations travel with the role's skills: the agent is
     # about to be dispatched *at* this file, and what it was written against is
     # as much a part of the briefing as what the role is good at.
     declared_lenses = skills_mod.declared_lenses(frontmatter)
     task_prompt = skills_mod.compose_prompt(
-        prompt_template.format(file=target_file),
+        prompt_template.format(
+            file=target_file,
+            slice_id=slice_id,
+            frontmatter=produced_frontmatter,
+        ),
         skills_mod.declared_skills(agent_config),
         declared_lenses,
         skills_mod.declared_instructions(agent_config),

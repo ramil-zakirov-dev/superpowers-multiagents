@@ -20,10 +20,10 @@ from pathlib import Path
 if __package__ in (None, ""):  # invoked as a script rather than `-m`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import sandbox
+from scripts import produced, sandbox
 from scripts.config import load_agent_config, resolve_agent, validate_config
-from scripts.errors import HookError, OrchestratorError
-from scripts.frontmatter import update_frontmatter_status
+from scripts.errors import ConfigError, HookError, OrchestratorError
+from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import claim_slice_lock, release_slice_lock_file
 
@@ -117,6 +117,48 @@ def _log_and_print(log_file: Path, message: str) -> None:
         pass
 
 
+def _missing_artifact(role: str, agent: dict, target_file: Path, log_file: Path) -> str:
+    """Why this run produced nothing the state machine can see, or "".
+
+    Exit code 0 means the process ended, not that the work landed. A role that
+    declares `produces` owes a document the next gate can read; without this
+    check the omission surfaces at that gate instead, where the only obvious
+    repair is to write frontmatter by hand.
+
+    Skipped for an isolated role: its output lives in a worktree that has not
+    been merged, so the main tree is the wrong place to look and a miss here
+    would mean nothing.
+    """
+    subdir = agent.get("produces")
+    if not subdir:
+        return ""
+    if agent.get("isolated_worktree"):
+        _log_and_print(
+            log_file,
+            f"[runner] note: '{role}' declares produces: {subdir} but runs in an "
+            f"isolated worktree, so its output is not in the main tree yet — "
+            f"artifact check skipped.",
+        )
+        return ""
+
+    frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+    slice_id = frontmatter.get("slice_id", target_file.stem)
+    try:
+        directory = produced.documents_dir(target_file, subdir)
+        if produced.find_document(target_file, subdir, slice_id) is not None:
+            return ""
+    except ConfigError as exc:
+        return f"[runner] ERROR: {exc}"
+
+    return (
+        f"[runner] ERROR: '{role}' exited 0 but left no document the pipeline can "
+        f"see: nothing in {directory} carries `slice_id: {slice_id}` with a "
+        f"`status:` for the next gate to move. The work may exist and still be "
+        f"invisible — a document with no frontmatter is the usual cause. Recording "
+        f"{FAILED_STATUS} rather than success."
+    )
+
+
 def _record_outcome(
     role: str,
     target_file: Path,
@@ -138,8 +180,14 @@ def _record_outcome(
 
     state_machine = config["state_machine"]
     if exit_code == 0:
-        new_status = agent.get("success_status")
-        event = f"on_{role}_complete"
+        missing = _missing_artifact(role, agent, target_file, log_file)
+        if missing:
+            _log_and_print(log_file, missing)
+            new_status = FAILED_STATUS
+            event = f"on_{role}_failed"
+        else:
+            new_status = agent.get("success_status")
+            event = f"on_{role}_complete"
     else:
         new_status = FAILED_STATUS
         event = f"on_{role}_failed"
