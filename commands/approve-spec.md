@@ -4,7 +4,7 @@ argument-hint: [path-to-spec]
 allowed-tools: Bash(python:*)
 ---
 
-!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" set-status --file "$1" --status SPEC_APPROVED`
+!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" set-status --file "$ARGUMENTS" --status SPEC_APPROVED`
 
 The transition above has already been attempted; its output is included.
 

@@ -1,10 +1,10 @@
 ---
 description: Close a verified slice — merges its branch and re-syncs every milestone brief
 argument-hint: [path-to-plan] [--skip-merge]
-allowed-tools: Bash(python:*)
+allowed-tools: Bash(python:*), Bash(echo:*), Bash(cut:*)
 ---
 
-!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" set-status --file "$1" --status VERIFIED_CLOSED $2`
+!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" set-status --file "$(echo "$ARGUMENTS" | cut -d' ' -f1)" --status VERIFIED_CLOSED $(echo "$ARGUMENTS" | cut -s -d' ' -f2-)`
 
 The transition above has already been attempted; its output is included. It
 does more than set a status: it merges the slice's feature branch and refreshes

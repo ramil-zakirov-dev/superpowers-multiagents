@@ -206,6 +206,20 @@ def cmd_set_status(args):
     after which a merge conflict cannot be recorded at all.
     """
     filepath = Path(args.file).resolve()
+
+    # A wrapper that loses its argument lands here with `--file` resolving to
+    # the working directory, and read_text() on a directory raises
+    # PermissionError — which names neither the command nor the missing
+    # argument, and reads like a permissions problem on the whole project.
+    if not filepath.is_file():
+        print(f"Error: --file '{filepath}' is not a file.")
+        if filepath.is_dir():
+            print(
+                "   That is a directory, which usually means the path argument "
+                "did not reach this command. Re-run it with the path spelled out."
+            )
+        sys.exit(1)
+
     project_root = find_project_root(filepath)
 
     try:
