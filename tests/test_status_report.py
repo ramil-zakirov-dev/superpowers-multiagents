@@ -8,6 +8,8 @@ grow with repository history while saying less.
 """
 
 import argparse
+import json
+import os
 
 import pytest
 
@@ -131,3 +133,56 @@ def test_the_summary_line_is_absent_when_every_document_is_tracked(base, capsys)
     _doc(base, "specs", "s.md", '---\nslice_id: "a"\nstatus: DRAFT_SPEC\n---\n')
     _status(base)
     assert "not adopted" not in capsys.readouterr().out.lower()
+
+
+def _lock(base, slice_id, payload):
+    """A supervisor lock where cmd_status's project-root resolution looks."""
+    locks = base / ".superpowers" / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    (locks / f"{slice_id}.lock").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_an_abandoned_dispatch_is_annotated(base, capsys):
+    _doc(base, "plans", "p.md", '---\nslice_id: "a"\nstatus: EXECUTING\n---\n')
+    # pid 999999999 is gone on any real process table — no injection needed.
+    _lock(base, "a", {"state": "running", "pid": 999999999})
+
+    _status(base)
+    out = capsys.readouterr().out
+
+    assert "EXECUTING" in out          # the stored status is still shown
+    assert "abandoned" in out
+    assert "999999999" in out
+    assert "reconcile" in out
+
+
+def test_a_live_supervisor_is_not_annotated(base, capsys):
+    _doc(base, "plans", "p.md", '---\nslice_id: "a"\nstatus: EXECUTING\n---\n')
+    _lock(base, "a", {"state": "running", "pid": os.getpid()})
+
+    _status(base)
+
+    assert "abandoned" not in capsys.readouterr().out
+
+
+def test_a_missing_lock_is_reported_as_abandonment(base, capsys):
+    _doc(base, "plans", "p.md", '---\nslice_id: "a"\nstatus: EXECUTING\n---\n')
+
+    _status(base)
+    out = capsys.readouterr().out
+
+    assert "abandoned" in out
+    assert "no lock file" in out
+
+
+def test_status_mutates_nothing_it_reports(base, capsys):
+    """A report that silently repairs is a worse instrument than one that lies."""
+    _doc(base, "plans", "p.md", '---\nslice_id: "a"\nstatus: EXECUTING\n---\n')
+    _lock(base, "a", {"state": "running", "pid": 999999999})
+    before_doc = (base / "plans" / "p.md").read_text(encoding="utf-8")
+    before_lock = (base / ".superpowers" / "locks" / "a.lock").read_text(encoding="utf-8")
+
+    _status(base)
+
+    assert (base / "plans" / "p.md").read_text(encoding="utf-8") == before_doc
+    assert (base / ".superpowers" / "locks" / "a.lock").read_text(encoding="utf-8") == before_lock

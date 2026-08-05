@@ -38,6 +38,7 @@ from scripts.git_ops import (
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
+from scripts import abandonment
 from scripts import milestone as milestone_mod
 from scripts import produced
 from scripts import sandbox
@@ -171,12 +172,14 @@ def cmd_status(args):
     # `model` this way.
     show_all = getattr(args, "all", False)
 
+    project_root = find_project_root(base_dir.resolve())
     try:
-        config = load_agent_config(find_project_root(base_dir.resolve()))
+        config = load_agent_config(project_root)
     except OrchestratorError:
         # A report is a read. An unusable config is worth reporting elsewhere,
         # not worth refusing to say what is on disk.
         config = DEFAULT_CONFIG
+    in_progress = abandonment.in_progress_statuses(config)
 
     print("\n=======================================================")
     print("   SUPERPOWERS MULTI-AGENTS STATUS REPORT")
@@ -214,6 +217,17 @@ def cmd_status(args):
                     # one must not take the whole report down with it.
                     suffix += " (track state unavailable)"
             print(f"  [{(label or 'no status'):<18}] {filepath.name} - {title}{suffix}")
+            # An in-progress status with no live supervisor behind it is a
+            # contradiction, not a fact. The stored value stays visible —
+            # hiding it would be its own lie — but the report no longer
+            # implies the work is running. Read-only: repair is reconcile's
+            # job, and a report that silently mutates state is a worse
+            # instrument than one that lies quietly.
+            if label in in_progress:
+                slice_id = data.get("slice_id", filepath.stem)
+                if abandonment.is_abandoned(label, slice_id, project_root, in_progress):
+                    evidence = abandonment.lock_evidence(slice_id, project_root)
+                    print(f"{'':23}⚠ abandoned: {evidence}; run `reconcile`")
 
         if unadopted:
             print(
