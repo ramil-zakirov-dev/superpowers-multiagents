@@ -60,14 +60,14 @@ def _retry_on_sharing_violation(func, *args, **kwargs):
             time.sleep(_TRANSIENT_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
 
 
-def _lock_is_held(data: dict) -> bool:
+def _lock_is_held(data: dict, *, is_alive=_is_process_alive) -> bool:
     state = data.get("state")
     if state == "running":
         pid = data.get("pid")
         if not pid:
             return False
         try:
-            return _is_process_alive(int(pid))
+            return is_alive(int(pid))
         except (TypeError, ValueError):
             return False
     if state == "starting":
