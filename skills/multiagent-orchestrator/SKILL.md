@@ -79,7 +79,7 @@ The orchestrator uses **file-based locks** (`.superpowers/locks/<slice_id>.lock`
 
 ### 1. Check Status of All Slices & Milestones
 ```bash
-python "<orchestrator>" status --dir docs/superpowers
+python "<orchestrator>" status --docs-dir docs/superpowers
 ```
 
 ### 2. Generic Agent Dispatch (New)
@@ -125,7 +125,7 @@ lists this slice — there is nothing to hand-edit.
 
 ### 6. Trigger Infrastructure Hooks
 ```bash
-python "<orchestrator>" trigger-hook --event on_slice_executor_start --dir .
+python "<orchestrator>" trigger-hook --event on_slice_executor_start --project-root .
 ```
 
 ### 7. View Execution Summary (For Opus 5 Audit)
@@ -137,16 +137,16 @@ python "<orchestrator>" summary --slice slice-N
 
 Only relevant when `.superpowers/agents.yaml` declares a `sandbox` block
 (see [docs/configuration.md](../../docs/configuration.md#sandbox-per-slice-infrastructure)).
-**Flags must precede the action** — `sandbox --dir X <action>`, not
-`sandbox <action> --dir X`.
+**Flags must precede the action** — `sandbox --project-root X <action>`, not
+`sandbox <action> --project-root X`.
 
 ```bash
-python "<orchestrator>" sandbox --dir . status
-python "<orchestrator>" sandbox --dir . up
-python "<orchestrator>" sandbox --dir . restart
-python "<orchestrator>" sandbox --dir . --shell posix env
-python "<orchestrator>" sandbox --dir . exec -- npm test
-python "<orchestrator>" sandbox --dir . --yes teardown
+python "<orchestrator>" sandbox --project-root . status
+python "<orchestrator>" sandbox --project-root . up
+python "<orchestrator>" sandbox --project-root . restart
+python "<orchestrator>" sandbox --project-root . --shell posix env
+python "<orchestrator>" sandbox --project-root . exec -- npm test
+python "<orchestrator>" sandbox --project-root . --yes teardown
 ```
 
 ---

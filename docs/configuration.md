@@ -55,6 +55,7 @@ agents:
     success_status: PLAN_GENERATED
     isolated_worktree: false
     produces: plans
+    produced_title: "{title} implementation plan"
     prompt_template: |-
       Read the spec at {file} and create a detailed TDD implementation plan using the writing-plans skill. Save it in docs/superpowers/plans/.
 
@@ -476,6 +477,33 @@ choose. Without `--yes`, reconcile prints the same evidence and changes
 nothing. It refuses outright when a live supervisor owns the slice —
 reconciling a running dispatch would race the runner's own epilogue.
 
+## Which directory a command wants
+
+Two kinds of subcommand want two different directories, and each says which
+in its own flag name:
+
+| Flag | Subcommands | Means |
+|------|-------------|-------|
+| `--docs-dir` | `status`, `wait`, `milestone new` | the docs base, `docs/superpowers` |
+| `--project-root` | `summary`, `reconcile`, `sandbox`, `trigger-hook` | the project root |
+
+`--dir` is the older name and still works everywhere it ever did — it is what
+`commands/status.md` shipped, so it cannot be retired. But it meant *both* of
+these depending on the subcommand, and passing the project root to a reporting
+command made it glob `./specs`, find nothing, and print `(none)` under exit 0.
+
+The reporting commands therefore accept **either** directory now, resolved by
+looking: a path holding `docs/superpowers/` is read as a project root, a path
+holding `milestones/`/`specs/`/`plans/` as the docs base, and the project-root
+reading wins when both could apply because that layout is the more specific
+signal. The report names the directory it resolved, in its header.
+
+A path that is neither is refused, naming the absolute path and both forms
+tried — exit `1` for `status`, exit `3` for `wait`, whose contract already
+distinguishes "could not start" from "timed out". A base that *exists* and
+holds no documents is a different fact: that is a genuinely empty pipeline and
+still reports as `(none)` under exit 0.
+
 ## Infrastructure Hooks (`.superpowers/hooks.yaml`)
 
 Optional. Lets a project prepare and tear down its own environment around a
@@ -647,10 +675,10 @@ command instead of being parsed as a flag:
 
 ```bash
 # Correct: flags before the action
-python -m scripts.orchestrator sandbox --dir . status
+python -m scripts.orchestrator sandbox --project-root . status
 
-# Wrong: rejected -- `--dir` is swallowed by `exec`'s REMAINDER bucket and the action fails closed
-python -m scripts.orchestrator sandbox status --dir .
+# Wrong: rejected -- the flag is swallowed by `exec`'s REMAINDER bucket and the action fails closed
+python -m scripts.orchestrator sandbox status --project-root .
 ```
 
 Every action other than `exec` fails closed with a clear error if anything
@@ -665,7 +693,7 @@ lands after it, rather than quietly running with the wrong config.
 | `exec -- <command...>` | Runs `<command...>` with the stack's environment merged in, in the project root. Everything after `--` is passed through untouched. |
 | `--yes teardown` | Destroys containers and volumes and deletes the state record. Refuses (exit code 2) without `--yes`. |
 
-All actions accept `--dir <project root>` (default: cwd) and `--branch
+All actions accept `--project-root <dir>` (default: cwd; `--dir` is the older name for it) and `--branch
 <branch>` (default: current branch). `up`, `restart`, `env`, `exec`, and
 `teardown` all require `sandbox.enabled: true` in `.superpowers/agents.yaml`
 — against a disabled or absent `sandbox` block, `up`/`restart`/`teardown`

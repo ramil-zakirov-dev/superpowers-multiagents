@@ -1,6 +1,6 @@
 {
   "name": "superpowers-multiagents",
-  "version": "2.11.0",
+  "version": "2.12.0",
   "description": "Multi-agent orchestration extension for Superpowers with supervised background execution",
   "type": "module",
   "keywords": [

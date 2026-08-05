@@ -4,7 +4,7 @@ argument-hint: [--all]
 allowed-tools: Bash(python:*)
 ---
 
-!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" status --dir docs/superpowers $ARGUMENTS`
+!`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" status --docs-dir docs/superpowers $ARGUMENTS`
 
 Summarise the state above: which documents sit at a human gate waiting on a
 decision, and which are mid-flight. Do not act on any of them — this command

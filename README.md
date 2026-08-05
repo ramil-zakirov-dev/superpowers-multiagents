@@ -194,7 +194,7 @@ different worktrees never fight over the same host port. See
 for the full schema, the template tokens, and the three teardown modes.
 
 ```bash
-python -m scripts.orchestrator sandbox --dir . status
+python -m scripts.orchestrator sandbox --project-root . status
 ```
 
 ```
@@ -238,7 +238,7 @@ lives under two directories, so one ignore rule covers it:
 
 | Path | Contents |
 | :--- | :--- |
-| `.superpowers/logs/` | One transcript per dispatch: `<role>_<file stem>.log` |
+| `.superpowers/logs/` | One file per role and document: `<role>_<file stem>.log`. **Every run of that pair appends**, under a `=== run started <timestamp> ===` banner — a retry must not erase the failed run it is retrying, which is the only one worth reading. The newest run is always the tail, which is what `summary` prints. Nothing rotates them; delete the directory when it gets old |
 | `.superpowers/locks/` | One lock per in-flight slice, naming the live supervisor PID |
 | `.superpowers/sandbox/` | One JSON record per docker-compose project, keyed by project name; contains the branch it belongs to, its loopback address, and when it was started; removed only when the stack's volumes are destroyed |
 | `.worktrees/` | Isolated worktrees for agents with `isolated_worktree: true` |
@@ -265,7 +265,7 @@ otherwise clutter every diff you take.
 A non-zero exit from the agent puts the slice in `FAILED` and releases the lock.
 Nothing is stranded and nothing needs hand-editing.
 
-1. Read the transcript: `... summary --slice <slice-id> --dir .`
+1. Read the transcript: `... summary --slice <slice-id> --project-root .`
 2. Fix the cause — a broken plan, a missing dependency, a failing environment hook.
 3. Return the slice to the gate it came from and dispatch again:
 
