@@ -4,3 +4,17 @@ __pycache__/
 .pytest-tmp/
 node_modules/
 .DS_Store
+
+# Runtime artifacts this plugin creates in the repo it is driving — including
+# this one, when it is dogfooded on itself. `.superpowers/agents.yaml` is
+# configuration and stays tracked; everything below is per-run state.
+#
+# `sdd/` matters most: it is the scaffolding a dispatched agent writes for
+# itself (task briefs, reports, review packages), and it quotes absolute local
+# paths and the name of whatever consumer project the run touched. This
+# repository is public, so a single `git add .` would publish all of it.
+.superpowers/sdd/
+.superpowers/logs/
+.superpowers/locks/
+.superpowers/sandbox/
+.worktrees/
