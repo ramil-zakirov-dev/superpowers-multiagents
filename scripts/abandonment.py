@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter
 from scripts.locks import _lock_is_held
 from scripts.paths import lock_path, logs_dir
@@ -94,19 +95,64 @@ OUTCOME_ABANDONED = "abandoned"
 OUTCOME_TIMED_OUT = "timed_out"
 
 
-def find_slice_document(base_dir: Path, slice_id: str) -> Path | None:
-    """The specs/ or plans/ document carrying this slice_id, if one exists."""
+def slice_documents(base_dir: Path, slice_id: str) -> list[Path]:
+    """Every specs/ or plans/ document carrying this slice_id, specs first.
+
+    A slice normally has two: the spec its planner was dispatched at, and the
+    plan its executor was dispatched at. Both carry the same `slice_id`, which
+    is why a caller asking about "the slice" has to say which dispatch it means.
+    """
+    found: list[Path] = []
     for subdir in ("specs", "plans"):
         directory = Path(base_dir) / subdir
         if not directory.is_dir():
             continue
         for candidate in sorted(directory.glob("*.md")):
             if candidate.stem == slice_id:
-                return candidate
+                found.append(candidate)
+                continue
             data = parse_frontmatter(candidate.read_text(encoding="utf-8"))
             if data.get("slice_id") == slice_id:
-                return candidate
-    return None
+                found.append(candidate)
+    return found
+
+
+def resolve_slice_document(
+    base_dir: Path, slice_id: str, in_progress: set[str]
+) -> Path:
+    """The one document a wait on `slice_id` is about.
+
+    With two documents per slice, "first one found" is a coin toss, and it
+    lands wrong in the common case: the spec settles at PLAN_GENERATED long
+    before the executor stops running, so a wait on the slice would read the
+    spec, call the dispatch finished and exit 0 while the plan was still
+    EXECUTING. The document in flight is the one being waited on, so that is
+    the one to pick — and when that is not unique, refusing beats guessing.
+    """
+    found = slice_documents(base_dir, slice_id)
+    if not found:
+        raise OrchestratorError(
+            f"no document under {base_dir} carries slice_id '{slice_id}'."
+        )
+    if len(found) == 1:
+        return found[0]
+
+    live = [
+        path for path in found
+        if parse_frontmatter(path.read_text(encoding="utf-8")).get("status")
+        in in_progress
+    ]
+    if len(live) == 1:
+        return live[0]
+
+    names = ", ".join(path.name for path in found)
+    reason = (
+        "several are in progress" if live else "none of them is in progress"
+    )
+    raise OrchestratorError(
+        f"ambiguous: {len(found)} documents carry slice_id '{slice_id}' "
+        f"({names}) and {reason}. Name the one you mean with --file."
+    )
 
 
 def latest_log(project_root: Path, slice_id: str) -> Path | None:

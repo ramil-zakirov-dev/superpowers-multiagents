@@ -106,7 +106,7 @@ def test_wait_returns_timed_out_when_neither_happens(document):
 
 def _args(base, **overrides):
     return argparse.Namespace(**{
-        "dir": str(base), "slice": "slice-01", "timeout": None, "poll": 15.0,
+        "dir": str(base), "slice": "slice-01", "file": None, "timeout": None, "poll": 15.0,
         **overrides,
     })
 
@@ -175,3 +175,83 @@ def test_cmd_wait_separates_cannot_start_from_timed_out(document, tmp_path, caps
         cmd_wait(_args(tmp_path))
 
     assert timed_out.value.code != cannot_start.value.code
+
+
+# --- Which document is a wait actually about? (architect fix, audit gate) ---
+#
+# A slice has TWO documents carrying the same slice_id: the spec the planner
+# was dispatched at, and the plan the executor was dispatched at. Resolving
+# `--slice` to "whichever turns up first" made `wait` report the spec's
+# settled status while the executor was still running — exit 0, in zero
+# seconds, for a dispatch in flight. Observed live: the printed status came
+# from the spec and the printed log path from the executor run, so the output
+# contradicted itself.
+
+
+@pytest.fixture
+def both_documents(tmp_path_factory):
+    """A slice at its realistic mid-life: spec settled, plan in flight."""
+    base = tmp_path_factory.mktemp("both")
+    (base / ".superpowers").mkdir()
+    specs = base / "docs" / "superpowers" / "specs"
+    plans = base / "docs" / "superpowers" / "plans"
+    specs.mkdir(parents=True)
+    plans.mkdir(parents=True)
+    spec = specs / "2026-08-05-slice-01-design.md"
+    spec.write_text(
+        '---\nslice_id: "slice-01"\nstatus: PLAN_GENERATED\n---\n\n# Spec\n',
+        encoding="utf-8",
+    )
+    plan = plans / "2026-08-05-slice-01-plan.md"
+    plan.write_text(
+        '---\nslice_id: "slice-01"\nstatus: EXECUTING\n---\n\n# Plan\n',
+        encoding="utf-8",
+    )
+    return base, spec, plan
+
+
+def test_cmd_wait_watches_the_document_that_is_in_flight_not_the_first_found(
+    both_documents, capsys
+):
+    """The spec is settled and listed first; the plan is what is running."""
+    root, _spec, _plan = both_documents
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers"))
+
+    # No lock at all + an in-progress plan == abandoned. Reading the spec
+    # instead would have exited 0 on PLAN_GENERATED.
+    assert excinfo.value.code == 2
+    out = capsys.readouterr().out
+    assert "EXECUTING" in out
+    assert "PLAN_GENERATED" not in out
+
+
+def test_cmd_wait_refuses_when_two_documents_are_both_in_flight(
+    both_documents, capsys
+):
+    """Ambiguity is not something to guess at: say so and stop."""
+    root, spec, _plan = both_documents
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace("PLAN_GENERATED", "PLANNING"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers"))
+
+    assert excinfo.value.code == 3
+    assert "ambiguous" in capsys.readouterr().out.lower()
+
+
+def test_cmd_wait_accepts_an_explicit_file_and_skips_resolution(
+    both_documents, capsys
+):
+    """`--file` is the unambiguous form, as it already is for reconcile."""
+    root, spec, _plan = both_documents
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers", slice=None, file=str(spec)))
+
+    assert excinfo.value.code == 0
+    assert "PLAN_GENERATED" in capsys.readouterr().out

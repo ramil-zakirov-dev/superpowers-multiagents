@@ -894,16 +894,39 @@ def cmd_wait(args):
         print(f"Error: {exc}")
         sys.exit(3)
 
-    document = abandonment.find_slice_document(base_dir, args.slice)
-    if document is None:
-        print(f"Error: no document under {base_dir} carries slice_id '{args.slice}'.")
+    # `--file` names the dispatch exactly, the way `reconcile` already does.
+    # `--slice` is the convenience, and it has to choose between the spec and
+    # the plan — both carry the same slice_id, and picking the wrong one
+    # reports another dispatch's settled status as this one's outcome.
+    explicit = getattr(args, "file", None)
+    slice_id = getattr(args, "slice", None)
+    try:
+        if explicit:
+            document = Path(explicit)
+            if not document.is_file():
+                raise OrchestratorError(f"no such document: {document}")
+            slice_id = parse_frontmatter(
+                document.read_text(encoding="utf-8")
+            ).get("slice_id") or slice_id
+            if not slice_id:
+                raise OrchestratorError(
+                    f"{document} carries no slice_id, so its lock cannot be found."
+                )
+        else:
+            if not slice_id:
+                raise OrchestratorError("give either --slice or --file.")
+            document = abandonment.resolve_slice_document(
+                base_dir, slice_id, abandonment.in_progress_statuses(config)
+            )
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
         sys.exit(3)
 
     result = abandonment.wait_for_dispatch(
-        document, project_root, config, args.slice,
+        document, project_root, config, slice_id,
         timeout=args.timeout, poll=args.poll,
     )
-    sys.exit(_report_wait_result(args.slice, document, project_root, result))
+    sys.exit(_report_wait_result(slice_id, document, project_root, result))
 
 
 def cmd_milestone(args):
@@ -1052,7 +1075,11 @@ def main():
         help="Block until a slice's dispatch ends "
              "(exit 0 finished, 2 abandoned, 1 timeout, 3 cannot start)",
     )
-    p_wait.add_argument("--slice", required=True, help="Slice ID to wait on")
+    # Not required, and not mutually exclusive by accident: `--file` is the
+    # unambiguous form (a slice has two documents with one slice_id), `--slice`
+    # the convenience that resolves to whichever of them is in flight.
+    p_wait.add_argument("--slice", help="Slice ID to wait on (resolved to the document in flight)")
+    p_wait.add_argument("--file", help="The exact document to wait on — unambiguous, as for `reconcile`")
     # NOTE (architect, audit gate): `--dir` here means the *docs base*, matching
     # `status`, not the *project root*, which is what it means for `sandbox`,
     # `trigger-hook` and `summary`. That split is issue #11 and this slice does
