@@ -29,6 +29,7 @@ from scripts.dependencies import check_unmet_dependencies
 from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
 from scripts.git_ops import (
+    branch_tip,
     branch_exists,
     create_git_worktree,
     current_branch,
@@ -541,10 +542,16 @@ def cmd_dispatch_agent(args):
     )
 
     isolated = agent_config.get("isolated_worktree", False)
+    base_ref = ""
     try:
         if isolated:
             cwd = create_git_worktree(slice_id, project_root)
             sandbox_branch = f"feat/{slice_id}"
+            # Where the branch stands *now*, so the supervisor can later ask
+            # what this run added rather than what the branch happens to
+            # carry. create_git_worktree reuses an existing worktree, so on a
+            # re-dispatch this is the previous run's tip, not the fork point.
+            base_ref = branch_tip(sandbox_branch, project_root)
             sandbox_env = sandbox.ensure_up(sandbox_branch, project_root, config)
         else:
             cwd = project_root
@@ -611,6 +618,7 @@ def cmd_dispatch_agent(args):
         "--log", str(log_file),
         "--cwd", str(cwd),
         "--sandbox-branch", teardown_branch,
+        "--base-ref", base_ref,
         "--", *[str(part) for part in agent_argv],
     ]
 

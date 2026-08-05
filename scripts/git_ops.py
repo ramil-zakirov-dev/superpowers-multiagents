@@ -96,6 +96,42 @@ def branch_exists(branch_name: str, project_root: Path) -> bool:
     return result.returncode == 0
 
 
+def branch_tip(branch_name: str, project_root: Path) -> str:
+    """The commit `branch_name` points at, or "" when it does not resolve.
+
+    Captured at dispatch, immediately after the worktree exists, so the run's
+    output can later be measured against where the branch started. For a fresh
+    branch that is the fork point; for one being re-dispatched it is whatever
+    the previous run left, which is the whole reason to record it rather than
+    compare against the main branch afterwards.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", branch_name],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def commits_since(base_ref: str, branch_name: str, project_root: Path):
+    """How many commits `branch_name` carries that `base_ref` does not.
+
+    None when git could not answer at all — an unresolvable ref, a missing
+    branch, not a repository. That is a different fact from zero and the
+    caller has to be able to tell them apart: zero means the agent left
+    nothing, None means we do not know what it left.
+    """
+    result = subprocess.run(
+        ["git", "rev-list", "--count", f"{base_ref}..{branch_name}"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def merge_and_cleanup_worktree(
     slice_id: str, project_root: Path, skip_merge: bool = False
 ) -> bool:

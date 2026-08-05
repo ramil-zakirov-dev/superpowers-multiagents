@@ -23,6 +23,7 @@ if __package__ in (None, ""):  # invoked as a script rather than `-m`
 from scripts import produced, sandbox
 from scripts.config import load_agent_config, resolve_agent, validate_config
 from scripts.errors import ConfigError, HookError, OrchestratorError
+from scripts.git_ops import commits_since
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import claim_slice_lock, release_slice_lock_file
@@ -39,6 +40,7 @@ def run_supervised(
     argv: list,
     cwd: Path,
     sandbox_branch: str = "",
+    base_ref: str = "",
 ) -> int:
     """Run one agent to completion and record the outcome. Returns its exit code."""
     target_file = Path(target_file)
@@ -49,7 +51,8 @@ def run_supervised(
     try:
         exit_code = _run_child(argv, cwd, log_file)
         _record_outcome(
-            role, target_file, project_root, exit_code, log_file, sandbox_branch
+            role, target_file, project_root, exit_code, log_file, sandbox_branch,
+            base_ref,
         )
         return exit_code
     finally:
@@ -117,28 +120,36 @@ def _log_and_print(log_file: Path, message: str) -> None:
         pass
 
 
-def _missing_artifact(role: str, agent: dict, target_file: Path, log_file: Path) -> str:
-    """Why this run produced nothing the state machine can see, or "".
+def _unmet_postcondition(
+    role: str,
+    agent: dict,
+    target_file: Path,
+    log_file: Path,
+    project_root: Path,
+    base_ref: str,
+) -> str:
+    """Why this run left nothing the next gate can use, or "".
 
-    Exit code 0 means the process ended, not that the work landed. A role that
-    declares `produces` owes a document the next gate can read; without this
-    check the omission surfaces at that gate instead, where the only obvious
-    repair is to write frontmatter by hand.
+    Exit code 0 means the process ended, not that the work landed. Every role
+    owes an artifact; which one depends on where it worked.
 
-    Skipped for an isolated role: its output lives in a worktree that has not
-    been merged, so the main tree is the wrong place to look and a miss here
-    would mean nothing.
+    * isolated — commits on `feat/<slice_id>`, the branch `close-slice` merges
+    * declares `produces` — a document the state machine can read
+    * neither — nothing to check
+
+    The isolated branch used to be a skip, on the reasoning that a worktree's
+    output is not in the main tree so looking there would be meaningless. True
+    of files, and it left the one role whose output is code with no check at
+    all: the branch is in the main repository the whole time, and it is
+    exactly where the next gate looks.
     """
+    if agent.get("isolated_worktree"):
+        return _no_commits_on_the_branch(
+            role, target_file, log_file, project_root, base_ref
+        )
+
     subdir = agent.get("produces")
     if not subdir:
-        return ""
-    if agent.get("isolated_worktree"):
-        _log_and_print(
-            log_file,
-            f"[runner] note: '{role}' declares produces: {subdir} but runs in an "
-            f"isolated worktree, so its output is not in the main tree yet — "
-            f"artifact check skipped.",
-        )
         return ""
 
     frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
@@ -159,6 +170,55 @@ def _missing_artifact(role: str, agent: dict, target_file: Path, log_file: Path)
     )
 
 
+def _no_commits_on_the_branch(
+    role: str, target_file: Path, log_file: Path, project_root: Path, base_ref: str
+) -> str:
+    """Whether an isolated run left anything on the branch it was given.
+
+    Counted from the branch tip recorded when the worktree came into being,
+    not from the main branch: a re-dispatch attaches to a branch that may
+    already carry an earlier run's commits, and counting from the main branch
+    would credit this run with that work.
+
+    An unanswerable count records FAILED. That reads like the inverse of the
+    rule in `utils._is_process_alive`, where an unanswerable lookup counts as
+    alive, and the two agree on the principle: neither acts destructively on
+    what it could not observe. There a missing answer would kill a running
+    dispatch; here it would certify a finished one, and certification is the
+    destructive move.
+    """
+    frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+    slice_id = frontmatter.get("slice_id", target_file.stem)
+    branch = f"feat/{slice_id}"
+
+    if not base_ref:
+        # Only reachable when run_supervised is driven directly; the
+        # dispatcher always records one. Say so rather than passing silently.
+        _log_and_print(
+            log_file,
+            f"[runner] note: no base ref was recorded for '{role}', so the "
+            f"commits on {branch} cannot be attributed to this run — check skipped.",
+        )
+        return ""
+
+    count = commits_since(base_ref, branch, project_root)
+    if count is None:
+        return (
+            f"[runner] ERROR: '{role}' exited 0 but git could not count commits on "
+            f"{branch} since {base_ref[:12]} — the branch may be gone. Nothing "
+            f"observed the work landing, so recording {FAILED_STATUS} rather than "
+            f"certifying it."
+        )
+    if count > 0:
+        return ""
+    return (
+        f"[runner] ERROR: '{role}' exited 0 but left no commits on {branch} "
+        f"since {base_ref[:12]}. That is the branch close-slice merges, so it "
+        f"would have nothing to take. If the work exists, it is in another tree. "
+        f"Recording {FAILED_STATUS} rather than success."
+    )
+
+
 def _record_outcome(
     role: str,
     target_file: Path,
@@ -166,6 +226,7 @@ def _record_outcome(
     exit_code: int,
     log_file: Path,
     sandbox_branch: str = "",
+    base_ref: str = "",
 ) -> None:
     """Advance the slice status and fire the completion hook."""
     try:
@@ -180,7 +241,9 @@ def _record_outcome(
 
     state_machine = config["state_machine"]
     if exit_code == 0:
-        missing = _missing_artifact(role, agent, target_file, log_file)
+        missing = _unmet_postcondition(
+            role, agent, target_file, log_file, project_root, base_ref
+        )
         if missing:
             _log_and_print(log_file, missing)
             new_status = FAILED_STATUS
@@ -255,6 +318,7 @@ def main(argv=None) -> int:
     parser.add_argument("--log", required=True)
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--sandbox-branch", default="")
+    parser.add_argument("--base-ref", default="")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
@@ -273,6 +337,7 @@ def main(argv=None) -> int:
         argv=command,
         cwd=Path(args.cwd),
         sandbox_branch=args.sandbox_branch,
+        base_ref=args.base_ref,
     )
 
 

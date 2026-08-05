@@ -190,11 +190,24 @@ def test_bad_adapter_leaves_the_slice_untouched(tmp_project, demo_spec):
     assert not lock_path(tmp_project, "slice-01-demo").exists()
 
 
+#: An isolated role's artifact is commits on its branch, so a stub that only
+#: prints leaves the dispatch nothing to record. This one does the minimum an
+#: isolated agent has to do to have worked at all.
+COMMITTING_AGENT = (
+    "import pathlib, subprocess; "
+    "pathlib.Path('work.txt').write_text('done'); "
+    "subprocess.run(['git', 'add', '-A']); "
+    "subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', "
+    "'commit', '-qm', 'feat: the work']); "
+    "print('stub ok')"
+)
+
+
 def test_isolated_worktree_dispatch_creates_a_worktree(tmp_project, demo_spec):
     (tmp_project / ".superpowers" / "agents.yaml").write_text(
         "agents:\n"
         "  planner:\n"
-        "    model: \"print('stub ok')\"\n"
+        f"    model: {COMMITTING_AGENT!r}\n"
         "    harness_adapter: 'stub_adapter.py'\n"
         "    isolated_worktree: true\n",
         encoding="utf-8",
