@@ -148,14 +148,31 @@ def wait_for_dispatch(
     in_progress = in_progress_statuses(config)
     started = monotonic()
     while True:
+        elapsed = monotonic() - started
+        # Lock first, then the document. The supervisor writes the terminal
+        # status BEFORE releasing the lock, so a "no live supervisor" reading
+        # always sees a settled document; reading first could land on the
+        # in-progress status the supervisor has not yet overwritten and
+        # then notice the lock already released, classifying a finished
+        # dispatch as abandoned.
+        lock_file = lock_path(project_root, slice_id)
+        lock_held = False
+        if lock_file.exists():
+            data = _read_lock(lock_file)
+            if data:
+                lock_held = _lock_is_held(data, is_alive=is_alive)
+        if not lock_held:
+            status = parse_frontmatter(
+                Path(document).read_text(encoding="utf-8")
+            ).get("status", "UNKNOWN")
+            if status not in in_progress:
+                return WaitResult(OUTCOME_TERMINAL, status, elapsed)
+            return WaitResult(OUTCOME_ABANDONED, status, elapsed)
         status = parse_frontmatter(
             Path(document).read_text(encoding="utf-8")
         ).get("status", "UNKNOWN")
-        elapsed = monotonic() - started
         if status not in in_progress:
             return WaitResult(OUTCOME_TERMINAL, status, elapsed)
-        if is_abandoned(status, slice_id, project_root, in_progress, is_alive=is_alive):
-            return WaitResult(OUTCOME_ABANDONED, status, elapsed)
         if timeout is not None and elapsed >= timeout:
             return WaitResult(OUTCOME_TIMED_OUT, status, elapsed)
         sleep(poll)
