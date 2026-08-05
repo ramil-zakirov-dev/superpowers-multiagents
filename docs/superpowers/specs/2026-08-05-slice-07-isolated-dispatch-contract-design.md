@@ -19,39 +19,41 @@ the function's own docstring says so deliberately. Its **postcondition is never
 stated and never checked**, and one of its preconditions is unstated too. Both
 gaps were paid for in the same run.
 
-### 1.1 The unstated precondition: a path the agent can open
+### 1.1 The unstated precondition: a path that names one specific tree
 
 `orchestrator.py:419` resolves the target document to an absolute path and
 `orchestrator.py:523` renders that absolute path into the agent's prompt. The
-precondition nobody wrote down is *the path handed to the agent must be one the
-agent can open from its own working directory*. Two dispatches of the same role,
-same model, same slice, differing only in the shape of `--file`:
+precondition nobody wrote down is *the path handed to the agent must name the
+copy in the tree the agent was told to work in*. An absolute path cannot do
+that: it names one tree, always the project root's, no matter which tree the
+agent is standing in.
 
-```
-$ opencode run --model kimi-for-coding/k3-256k Read the spec at C:\Users\vkukm\repos\...\...-design.md and create a detailed TDD implementation plan ...
+Note this is not affected by how the operator typed `--file`. The `.resolve()`
+at line 419 means a relative argument and an absolute one produce the identical
+prompt. There is no invocation of the current code that avoids this.
 
-! permission requested: external_directory (C:\Users\vkukm\repos\...\specs\*); auto-rejecting
-✗ Read docs/superpowers/specs/...-design.md failed
-Error: The user rejected permission to use this specific tool call.
-```
+**A retraction belongs here, because an earlier version of this section had a
+different and wrong explanation.** Issue #15 attributed a planner failure to
+opencode refusing an absolute path as `external_directory`. That does not
+survive the logs: `planner_2026-08-05-slice-06-...log` (the sixteen-minute run
+that produced a complete plan), `executor_2026-08-05-slice-06-...log` and
+`planner_2026-08-05-slice-07-...log` all carry an absolute path in their first
+line and contain **zero** `permission requested` lines between them. Something
+did refuse that one run — the log quoted in the issue is real — but it was not
+the shape of the path, and the claim that it was cannot be sustained.
 
-Thirty seconds, exit 0, no plan. The same dispatch with a relative `--file` ran
-for sixteen minutes and produced the document. opencode (1.17.11) treats an
-absolute path as a request for `external_directory` access even when it resolves
-inside the agent's own cwd, and a non-interactive run auto-rejects anything
-needing a human. Note the two paths in that output disagree with each other: the
-permission was requested for the absolute glob, the read is reported relative —
-the harness had already resolved it into the project and refused anyway.
+The evidence that would settle it no longer exists: `runner.py:69` opens the log
+with mode `"w"`, so the retry overwrote the failed run's log with its own. That
+is worth its own issue and is not this slice's business, but it is the reason
+this section states a mechanism rather than a diagnosis.
 
-So today `/superpowers-multiagents:dispatch planner <path>` is correct or
-incorrect depending on which directory the operator typed it from. That is an
-ambient input to a command that already knows the answer: it computes
-`project_root` at line 425 and passes the agent's cwd to the runner at line 601.
+What follows does not depend on the retracted claim.
 
-### 1.2 The same line, worse: isolation silently defeated
+### 1.2 The consequence that is proven: isolation silently defeated
 
-For an **isolated** role the absolute path does not merely fail to open — it
-opens the *wrong tree's* copy. The dispatcher did its half correctly: it created
+For an **isolated** role the absolute path does not merely name an inconvenient
+copy — it names the copy in the *wrong tree*, and the agent works there. The
+dispatcher did its half correctly: it created
 `.worktrees/slice-06-abandoned-dispatch` on `feat/slice-06-abandoned-dispatch`
 and passed it as `--cwd`. The prompt then told the agent to execute the plan at
 an absolute path inside the **main** tree. The agent noticed where it had landed
@@ -141,7 +143,8 @@ Out:
 - Judging the *content* of commits. Counting is not review; the human audit gate
   before `close-slice` is unchanged and still does the judging.
 - Changing what a non-isolated role's artifact check does. It is correct.
-- Making any harness accept absolute paths. That is opencode's rule, not ours.
+- Diagnosing what refused the run quoted in #15. Its log was overwritten by the
+  retry (§1.1), so there is nothing left to diagnose from.
 - Detecting an agent that commits to the slice branch **and** the main tree. It
   passes this check and still dirties main; see §6.
 - The two residues found while reading the issues: a produced document's own
