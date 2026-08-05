@@ -32,8 +32,16 @@ def test_set_status_offers_skip_merge():
 
 
 def test_script_invocation_works_from_another_directory():
-    """Installed as a plugin, cwd is the user's project, not the plugin root."""
+    """Installed as a plugin, cwd is the user's project, not the plugin root.
+
+    The project is given a real (empty) docs base: this test is about the
+    sys.path bootstrap resolving from a foreign cwd, and since #11 a `status`
+    pointed at no pipeline at all exits non-zero on purpose — which would
+    make this pass or fail for a reason it is not about.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
+        for name in ("milestones", "specs", "plans"):
+            (Path(tmp_dir) / "docs" / "superpowers" / name).mkdir(parents=True)
         result = _run([str(REPO_ROOT / "scripts" / "orchestrator.py"), "status"], cwd=tmp_dir)
         assert result.returncode == 0, result.stderr
 

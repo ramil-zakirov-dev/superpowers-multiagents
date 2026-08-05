@@ -13,6 +13,12 @@ from scripts.errors import OrchestratorError
 
 SUPERPOWERS_DIRNAME = ".superpowers"
 
+#: Where a project's pipeline documents live, relative to its root.
+DOCS_BASE_PARTS: tuple[str, ...] = ("docs", "superpowers")
+
+#: The document folders under that base, in the order a report lists them.
+DOCUMENT_DIRNAMES: tuple[str, ...] = ("milestones", "specs", "plans")
+
 #: Paths, relative to the project root, that the orchestrator itself creates.
 #: `git_ops.check_working_tree_clean` ignores these when deciding cleanliness,
 #: so the orchestrator's own artifacts cannot block its own merge.
@@ -86,6 +92,47 @@ def document_prompt_path(target_file: Path, project_root: Path) -> str:
             f"so there is no path an agent working in that root could open. "
             f"Dispatch a document that lives in the project."
         ) from None
+
+
+def resolve_docs_base(given: Path, *, must_exist: bool = True) -> Path:
+    """The docs base a `--dir` argument names, whichever of the two it is.
+
+    `--dir` is the project root for `sandbox`, `summary`, `trigger-hook` and
+    `reconcile`, and the docs base for `status`, `wait` and `milestone new`.
+    Four subcommands teach a habit the other three then punish: passing the
+    project root made them glob `./specs`, find nothing, and print `(none)`
+    under exit 0 — a report that asserts an empty pipeline rather than
+    admitting it was pointed somewhere else.
+
+    Both readings are answered by looking, not guessing. The project-root
+    reading is preferred because `docs/superpowers/` is the canonical layout
+    and therefore the more specific signal: a repository with a top-level
+    `specs/` of its own would otherwise be mistaken for its own docs base.
+
+    Neither reading matching is a question about the argument, not a fact
+    about the pipeline, so it is refused — with one exception. A base that
+    *exists* and holds no documents is a real, empty pipeline and resolves
+    normally; only a base that is nowhere is refused. `must_exist=False` is
+    for the command that writes a project's first document, where a missing
+    base is the normal case.
+    """
+    given = Path(given).resolve()
+
+    nested = given.joinpath(*DOCS_BASE_PARTS)
+    if nested.is_dir():
+        return nested
+    if any((given / name).is_dir() for name in DOCUMENT_DIRNAMES):
+        return given
+    if not must_exist:
+        return given
+
+    raise OrchestratorError(
+        f"No superpowers documents directory at '{given}'. Looked for "
+        f"'{nested}' (reading it as a project root) and for "
+        f"{'/'.join(DOCUMENT_DIRNAMES)} directly inside it (reading it as the "
+        f"docs base). Point --dir at the project root, or create the layout "
+        f"with `milestone new`."
+    )
 
 
 def is_artifact_path(rel_path: str) -> bool:

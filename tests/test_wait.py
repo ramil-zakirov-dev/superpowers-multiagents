@@ -146,12 +146,23 @@ def test_cmd_wait_exits_1_when_the_timeout_elapses(document, capsys):
     assert "Timed out" in capsys.readouterr().out
 
 
+def _empty_pipeline(root):
+    """A real docs base holding no documents — an empty pipeline, not a
+    missing one. `wait` has to get past resolving the directory to reach the
+    question these tests are about.
+    """
+    (root / ".superpowers").mkdir(exist_ok=True)
+    for name in ("milestones", "specs", "plans"):
+        (root / "docs" / "superpowers" / name).mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def test_cmd_wait_refuses_an_unknown_slice_id(tmp_path, capsys):
     """Exit 3, not 1. A timeout means "not finished yet, ask again"; an unknown
     slice means "this will never finish". A caller branching on the code must
     be able to tell those apart, or a typo in --slice reads as a slow run and
     it waits for something that does not exist."""
-    (tmp_path / ".superpowers").mkdir()
+    _empty_pipeline(tmp_path)
 
     with pytest.raises(SystemExit) as excinfo:
         cmd_wait(_args(tmp_path))
@@ -170,7 +181,7 @@ def test_cmd_wait_separates_cannot_start_from_timed_out(document, tmp_path, caps
         cmd_wait(_args(root / "docs" / "superpowers", timeout=0))
     capsys.readouterr()
 
-    (tmp_path / ".superpowers").mkdir()
+    _empty_pipeline(tmp_path)
     with pytest.raises(SystemExit) as cannot_start:
         cmd_wait(_args(tmp_path))
 

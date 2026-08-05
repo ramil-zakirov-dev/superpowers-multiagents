@@ -39,7 +39,8 @@ from scripts.git_ops import (
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock, release_slice_lock_file
 from scripts.paths import (
-    ARTIFACT_PREFIXES, document_prompt_path, lock_path, log_path, logs_dir,
+    ARTIFACT_PREFIXES, DOCS_BASE_PARTS, DOCUMENT_DIRNAMES, document_prompt_path,
+    lock_path, log_path, logs_dir, resolve_docs_base,
 )
 from scripts import abandonment
 from scripts import milestone as milestone_mod
@@ -167,15 +168,37 @@ def _classify_document(filepath: Path, frontmatter: dict, config: dict):
     return status, ""
 
 
+def _docs_base(given, *, must_exist: bool = True, exit_code: int = 1) -> Path:
+    """Resolve a `--dir` argument, or exit naming what it read.
+
+    The refusal is the point: a report that cannot find the pipeline must say
+    so rather than print `(none)` three times and exit 0.
+
+    `exit_code` is not decoration. `wait` publishes a contract — 0 finished,
+    2 abandoned, 1 timed out, 3 could not start — and an unresolvable
+    directory is squarely "could not start". Exiting 1 there would tell a
+    caller its dispatch is still running, which is the same conflation of
+    "I could not look" with a real outcome that the rest of this module
+    exists to prevent.
+    """
+    try:
+        return resolve_docs_base(
+            Path(given) if given else Path(*DOCS_BASE_PARTS), must_exist=must_exist
+        )
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(exit_code)
+
+
 def cmd_status(args):
     """Scans and displays status of milestones, specs, and plans."""
-    base_dir = Path(args.dir) if args.dir else Path("docs/superpowers")
+    base_dir = _docs_base(getattr(args, "dir", ""))
     # `all` postdates this function's other callers, and a Namespace built
     # without it must still work — the same reason cmd_dispatch_agent reads
     # `model` this way.
     show_all = getattr(args, "all", False)
 
-    project_root = find_project_root(base_dir.resolve())
+    project_root = find_project_root(base_dir)
     try:
         config = load_agent_config(project_root)
     except OrchestratorError:
@@ -187,9 +210,12 @@ def cmd_status(args):
 
     print("\n=======================================================")
     print("   SUPERPOWERS MULTI-AGENTS STATUS REPORT")
+    # Named, and named absolutely: `(none)` is only auditable next to the
+    # directory it is a statement about.
+    print(f"   {base_dir}")
     print("=======================================================\n")
 
-    for folder_name in ["milestones", "specs", "plans"]:
+    for folder_name in DOCUMENT_DIRNAMES:
         folder_path = base_dir / folder_name
         print(f"--- {folder_name.upper()} ({folder_path}) ---")
 
@@ -927,8 +953,8 @@ def _report_wait_result(slice_id: str, document: Path, project_root: Path, resul
 
 def cmd_wait(args):
     """Block until a slice's dispatch ends — by finishing or by abandonment."""
-    base_dir = Path(args.dir) if args.dir else Path("docs/superpowers")
-    project_root = find_project_root(base_dir.resolve())
+    base_dir = _docs_base(getattr(args, "dir", ""), exit_code=3)
+    project_root = find_project_root(base_dir)
 
     try:
         config = load_agent_config(project_root)
@@ -980,7 +1006,10 @@ def cmd_milestone(args):
     `argparse.REMAINDER`, and nothing here passes a command through.
     """
     if args.action == "new":
-        base_dir = Path(args.dir) if args.dir else Path("docs/superpowers")
+        # The one command that writes a project's first document, so a base
+        # that does not exist yet is the normal case rather than a bad
+        # argument — but a project root still resolves to its docs base.
+        base_dir = _docs_base(getattr(args, "dir", ""), must_exist=False)
         try:
             path = milestone_mod.create(base_dir, args.id, args.title)
         except OrchestratorError as exc:
@@ -1026,9 +1055,22 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    # `--dir` names two different things across this CLI — the docs base for
+    # the reporting commands, the project root for the acting ones — and a
+    # caller who learned the habit from one group used to get silence from
+    # the other (issue #11). Both groups now carry a name that says which,
+    # with `--dir` kept as an alias so nothing in the field breaks; the
+    # reporting commands additionally accept either directory, resolved by
+    # `paths.resolve_docs_base`, and refuse a path that is neither.
+    DOCS_DIR_FLAGS = ("--docs-dir", "--dir")
+    PROJECT_ROOT_FLAGS = ("--project-root", "--dir")
+
     # status
     p_status = subparsers.add_parser("status", help="Show status of all milestones, specs, and plans")
-    p_status.add_argument("--dir", default="docs/superpowers", help="Base superpowers directory")
+    p_status.add_argument(
+        *DOCS_DIR_FLAGS, dest="dir", default="docs/superpowers",
+        help="Docs base, or the project root holding it",
+    )
     p_status.add_argument(
         "--all", action="store_true",
         help="Also list documents that carry no lifecycle status",
@@ -1049,7 +1091,9 @@ def main():
     # trigger-hook
     p_trigger = subparsers.add_parser("trigger-hook", help="Trigger an infrastructure hook manually")
     p_trigger.add_argument("--event", required=True, help="Hook event name")
-    p_trigger.add_argument("--dir", default="", help="Project root directory")
+    p_trigger.add_argument(
+        *PROJECT_ROOT_FLAGS, dest="dir", default="", help="Project root directory"
+    )
 
     # dispatch-agent (generic)
     p_agent = subparsers.add_parser("dispatch-agent", help="Dispatch an agent by role")
@@ -1097,7 +1141,10 @@ def main():
     # summary
     p_sum = subparsers.add_parser("summary", help="Show execution summary log for audit")
     p_sum.add_argument("--slice", required=True, help="Slice ID or keyword")
-    p_sum.add_argument("--dir", default="", help="Project root directory (default: cwd)")
+    p_sum.add_argument(
+        *PROJECT_ROOT_FLAGS, dest="dir", default="",
+        help="Project root directory (default: cwd)",
+    )
 
     # reconcile
     p_reconcile = subparsers.add_parser(
@@ -1106,7 +1153,8 @@ def main():
     )
     p_reconcile.add_argument("--file", required=True, help="Path to the slice document")
     p_reconcile.add_argument(
-        "--dir", default="", help="Project root (default: derived from --file)"
+        *PROJECT_ROOT_FLAGS, dest="dir", default="",
+        help="Project root (default: derived from --file)",
     )
     p_reconcile.add_argument(
         "--yes", action="store_true", help="Apply the move to FAILED"
@@ -1123,13 +1171,11 @@ def main():
     # the convenience that resolves to whichever of them is in flight.
     p_wait.add_argument("--slice", help="Slice ID to wait on (resolved to the document in flight)")
     p_wait.add_argument("--file", help="The exact document to wait on — unambiguous, as for `reconcile`")
-    # NOTE (architect, audit gate): `--dir` here means the *docs base*, matching
-    # `status`, not the *project root*, which is what it means for `sandbox`,
-    # `trigger-hook` and `summary`. That split is issue #11 and this slice does
-    # not resolve it — but do not invent a third meaning: keep `wait` identical
-    # to `status`, so whatever #11 settles can change both together.
+    # Identical to `status`, as the note left here at the previous slice's
+    # audit gate required: both were changed together when #11 was settled.
     p_wait.add_argument(
-        "--dir", default="docs/superpowers", help="Base superpowers directory (as in `status`)"
+        *DOCS_DIR_FLAGS, dest="dir", default="docs/superpowers",
+        help="Docs base, or the project root holding it (as in `status`)",
     )
     p_wait.add_argument(
         "--timeout", type=float, default=None,
@@ -1145,7 +1191,9 @@ def main():
     p_sandbox.add_argument(
         "action", choices=["up", "restart", "status", "env", "exec", "teardown"]
     )
-    p_sandbox.add_argument("--dir", default="", help="Project root (default: cwd)")
+    p_sandbox.add_argument(
+        *PROJECT_ROOT_FLAGS, dest="dir", default="", help="Project root (default: cwd)"
+    )
     p_sandbox.add_argument("--branch", default="", help="Branch (default: current)")
     p_sandbox.add_argument(
         "--shell", default="posix", choices=["posix", "powershell", "json"],
@@ -1164,7 +1212,8 @@ def main():
     p_ms_new.add_argument("--id", required=True, help="Milestone id, e.g. milestone-1")
     p_ms_new.add_argument("--title", required=True, help="Milestone title")
     p_ms_new.add_argument(
-        "--dir", default="docs/superpowers", help="Base superpowers directory"
+        *DOCS_DIR_FLAGS, dest="dir", default="docs/superpowers",
+        help="Docs base, or the project root holding it (created if absent)",
     )
 
     p_ms_sync = milestone_actions.add_parser("sync", help="Refresh track state")
