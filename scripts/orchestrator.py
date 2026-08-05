@@ -37,7 +37,7 @@ from scripts.git_ops import (
 )
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock, release_slice_lock_file
-from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
+from scripts.paths import ARTIFACT_PREFIXES, lock_path, log_path, logs_dir
 from scripts import abandonment
 from scripts import milestone as milestone_mod
 from scripts import produced
@@ -867,14 +867,26 @@ def _report_wait_result(slice_id: str, document: Path, project_root: Path, resul
         )
         return 0
     if result.outcome == abandonment.OUTCOME_ABANDONED:
-        evidence = abandonment.lock_evidence(slice_id, project_root)
+        # The grounds are the ones the verdict was reached on, not a fresh
+        # lookup: re-deriving them here once produced "is abandoned ... pid
+        # 22776, which is alive", a line that argues against itself.
         print(
             f"Slice '{slice_id}' is abandoned after {result.elapsed:.0f}s: "
-            f"{evidence}."
+            f"{result.evidence}."
         )
         print(f"Status is still '{result.status}'. Log: {log}")
         print(f"Audit the work, then run: reconcile --file {document} --yes")
         return 2
+    if result.outcome == abandonment.OUTCOME_UNREADABLE_LOCK:
+        # Exit 3, with the timeout's codes: this says the watcher failed, not
+        # that the dispatch did. A caller must not read it as an outcome.
+        print(
+            f"Could not read the lock for '{slice_id}' on "
+            f"{abandonment._MAX_UNREADABLE_POLLS} consecutive polls; giving up "
+            f"without a verdict. Slice is still '{result.status}'. Log: {log}"
+        )
+        print(f"Inspect {lock_path(project_root, slice_id)} by hand.")
+        return 3
     print(
         f"Timed out after {result.elapsed:.0f}s; slice '{slice_id}' is still "
         f"'{result.status}'. Log: {log}"

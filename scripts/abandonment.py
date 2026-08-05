@@ -61,6 +61,38 @@ def is_abandoned(
     return not _lock_is_held(_read_lock(lock_file), is_alive=is_alive)
 
 
+def describe_lock(lock_file: Path, data: dict | None, held: bool) -> str:
+    """One sentence about a lock, from what a caller has already read.
+
+    Deliberately takes no `is_alive` and performs no lookup. A verdict and
+    the grounds it names have to come from a single observation: when they
+    were two lookups, the output could contradict itself, and once did —
+    "is abandoned ... pid 22776, which is alive".
+
+    `data` is None for an absent lock and `{}` for one that would not parse.
+    """
+    if data is None:
+        return f"no lock file at {lock_file} — nothing owns this slice"
+    if not data:
+        return f"lock at {lock_file} is unreadable — nothing verifiably owns this slice"
+    if data.get("state") == "running" and data.get("pid"):
+        liveness = "alive" if held else "not alive"
+        return f"lock names supervisor pid {data['pid']}, which is {liveness}"
+    if data.get("state") == "starting":
+        return f"lock at {lock_file} is still 'starting' — the supervisor never claimed it"
+    return f"lock at {lock_file} is in state {data.get('state')!r}"
+
+
+def read_lock_state(slice_id: str, project_root: Path, *, is_alive=_is_process_alive):
+    """The lock's contents and whether it is held, from one read."""
+    lock_file = lock_path(project_root, slice_id)
+    if not lock_file.exists():
+        return lock_file, None, False
+    data = _read_lock(lock_file)
+    held = _lock_is_held(data, is_alive=is_alive) if data else False
+    return lock_file, data, held
+
+
 def lock_evidence(slice_id: str, project_root: Path, *, is_alive=_is_process_alive) -> str:
     """What an abandonment verdict is based on, in one sentence.
 
@@ -68,24 +100,7 @@ def lock_evidence(slice_id: str, project_root: Path, *, is_alive=_is_process_ali
     cannot see, so the verdict names its grounds: the lock's pid and its
     liveness, or the lock's absence.
     """
-    lock_file = lock_path(project_root, slice_id)
-    if not lock_file.exists():
-        return f"no lock file at {lock_file} — nothing owns this slice"
-    data = _read_lock(lock_file)
-    if not data:
-        return f"lock at {lock_file} is unreadable — nothing verifiably owns this slice"
-    if data.get("state") == "running" and data.get("pid"):
-        pid = data["pid"]
-        try:
-            alive = is_alive(int(pid))
-        except (TypeError, ValueError):
-            alive = False
-        if alive:
-            return f"lock names supervisor pid {pid}, which is alive"
-        return f"lock names supervisor pid {pid}, which is not alive"
-    if data.get("state") == "starting":
-        return f"lock at {lock_file} is still 'starting' — the supervisor never claimed it"
-    return f"lock at {lock_file} is in state {data.get('state')!r}"
+    return describe_lock(*read_lock_state(slice_id, project_root, is_alive=is_alive))
 
 
 DEFAULT_POLL_SECONDS = 15.0
@@ -93,6 +108,13 @@ DEFAULT_POLL_SECONDS = 15.0
 OUTCOME_TERMINAL = "terminal"
 OUTCOME_ABANDONED = "abandoned"
 OUTCOME_TIMED_OUT = "timed_out"
+OUTCOME_UNREADABLE_LOCK = "unreadable_lock"
+
+#: How many consecutive unreadable polls before a wait gives up. The lock is
+#: rewritten atomically, so one unparseable read is a lost race and not a
+#: fact; a run of them is a corrupt file, which is the watcher's problem to
+#: report rather than the dispatch's outcome to declare.
+_MAX_UNREADABLE_POLLS = 4
 
 
 def slice_documents(base_dir: Path, slice_id: str) -> list[Path]:
@@ -169,6 +191,11 @@ class WaitResult:
     outcome: str   # OUTCOME_TERMINAL | OUTCOME_ABANDONED | OUTCOME_TIMED_OUT
     status: str    # the document's status at the moment the wait ended
     elapsed: float
+    #: The grounds the verdict was reached on, captured when it was reached.
+    #: Re-deriving them at print time made the output contradict itself —
+    #: observed as "is abandoned ... pid 22776, which is alive", the two
+    #: halves being two lookups milliseconds apart.
+    evidence: str = ""
 
 
 def wait_for_dispatch(
@@ -193,6 +220,7 @@ def wait_for_dispatch(
     """
     in_progress = in_progress_statuses(config)
     started = monotonic()
+    unreadable_polls = 0
     while True:
         elapsed = monotonic() - started
         # Lock first, then the document. The supervisor writes the terminal
@@ -201,19 +229,35 @@ def wait_for_dispatch(
         # in-progress status the supervisor has not yet overwritten and
         # then notice the lock already released, classifying a finished
         # dispatch as abandoned.
-        lock_file = lock_path(project_root, slice_id)
-        lock_held = False
-        if lock_file.exists():
-            data = _read_lock(lock_file)
+        lock_file, data, lock_held = read_lock_state(
+            project_root=project_root, slice_id=slice_id, is_alive=is_alive
+        )
+        if data is not None:
             if data:
-                lock_held = _lock_is_held(data, is_alive=is_alive)
+                unreadable_polls = 0
+            else:
+                # Present but unparseable. That is a failure to observe, not
+                # an observation: the lock is rewritten atomically, so this
+                # is a lost race far more often than a corrupt file. Holding
+                # the wait open is the fail-closed reading — the alternative
+                # convicts a live supervisor on a read error.
+                unreadable_polls += 1
+                if unreadable_polls >= _MAX_UNREADABLE_POLLS:
+                    status = parse_frontmatter(
+                        Path(document).read_text(encoding="utf-8")
+                    ).get("status", "UNKNOWN")
+                    return WaitResult(OUTCOME_UNREADABLE_LOCK, status, elapsed)
+                lock_held = True
         if not lock_held:
             status = parse_frontmatter(
                 Path(document).read_text(encoding="utf-8")
             ).get("status", "UNKNOWN")
             if status not in in_progress:
                 return WaitResult(OUTCOME_TERMINAL, status, elapsed)
-            return WaitResult(OUTCOME_ABANDONED, status, elapsed)
+            return WaitResult(
+                OUTCOME_ABANDONED, status, elapsed,
+                evidence=describe_lock(lock_file, data, lock_held),
+            )
         status = parse_frontmatter(
             Path(document).read_text(encoding="utf-8")
         ).get("status", "UNKNOWN")
