@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-06-abandoned-dispatch"
 title: "Abandoned dispatch implementation plan"
-status: PLAN_GENERATED
+status: PLAN_APPROVED
 target_version: "2.10.0"
 spec: "docs/superpowers/specs/2026-08-05-slice-06-abandoned-dispatch-design.md"
 depends_on: []
