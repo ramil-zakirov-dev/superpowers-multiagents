@@ -24,3 +24,10 @@ An isolated role's worktree is created from HEAD, so the document must be
 committed on the branch checked out in the main working tree before dispatching.
 A refusal naming an uncommitted file means exactly that: commit it there and
 dispatch again.
+
+A `[Provision Gate]` refusal is about `worktree.copy` — the untracked files, a
+`.env` typically, that the project declares an isolated agent needs. Report what
+it says and stop. Do not copy the file into the worktree yourself, do not drop
+the entry to get past the gate, and do not dispatch a non-isolated role instead:
+each of those hands the agent an environment nobody checked, which is the
+failure the gate exists to prevent.

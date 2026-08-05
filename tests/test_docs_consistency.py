@@ -58,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.12.0"
+    assert manifest["version"] == "2.13.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -377,7 +377,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.12.0"
+    assert plugin["version"] == package["version"] == "2.13.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
@@ -733,3 +733,43 @@ def test_the_dispatch_contract_is_documented():
     assert "What a dispatch promises, and what it verifies" in CONFIGURATION
     assert "counting is not reviewing" in CONFIGURATION.lower()
     assert "git branch --show-current" in CONFIGURATION
+
+
+def test_every_worktree_config_key_is_documented():
+    from scripts.config import KNOWN_WORKTREE_KEYS
+
+    for key in sorted(KNOWN_WORKTREE_KEYS):
+        assert f"worktree.{key}" in CONFIGURATION or f"`{key}`" in CONFIGURATION, (
+            f"worktree config key '{key}' is accepted by the loader but appears "
+            f"nowhere in docs/configuration.md"
+        )
+
+
+def test_documented_worktree_example_survives_the_real_validator():
+    """A doc example that does not load is worse than no example."""
+    import re as _re
+
+    from ruamel.yaml import YAML
+
+    from scripts.config import DEFAULT_CONFIG, deep_merge, validate_config
+    from scripts.utils import _to_plain_dict
+
+    blocks = _re.findall(r"```yaml\n(.*?)```", CONFIGURATION, _re.DOTALL)
+    worktree_blocks = [b for b in blocks if b.lstrip().startswith("worktree:")]
+    assert worktree_blocks, "docs/configuration.md has no worktree YAML example"
+
+    for block in worktree_blocks:
+        parsed = _to_plain_dict(YAML(typ="rt").load(block))
+        validate_config(deep_merge(DEFAULT_CONFIG, parsed))
+
+
+def test_the_worktree_provisioning_contract_is_documented():
+    """Three claims a user has to be able to rely on and argue with: that a
+    refusal is a refusal, which git's `.gitignore` is consulted, and that a
+    copied secret does not outlive the slice."""
+    assert "Files an isolated worktree does not get" in CONFIGURATION
+    assert "not in force where the agent runs" in CONFIGURATION
+    assert "git worktree remove" in CONFIGURATION
+    assert "worktree.copy" in README, (
+        "README never tells a user the feature exists"
+    )

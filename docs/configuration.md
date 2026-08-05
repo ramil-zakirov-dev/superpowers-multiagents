@@ -78,6 +78,11 @@ agents:
     prompt_template: 'Execute the implementation plan at {file} using the subagent-driven-development skill. Check off tasks in the plan as completed.'
     extra_args: []
 
+# Untracked files copied into an isolated role's worktree (optional; empty = nothing is copied)
+worktree:
+  copy:
+    - .env                             # project-relative; must be ignored by the .gitignore HEAD carries
+
 # Per-slice infrastructure sandbox (optional; omitted or enabled: false = no docker call ever made)
 sandbox:
   enabled: true                      # opt in; false (the default) means no docker call is ever made
@@ -556,6 +561,85 @@ A failing `on_slice_{role}_start` aborts the dispatch **before** the slice's
 status is touched and releases the lock, so the slice stays at its entry gate.
 A failing completion hook is reported but does not overwrite the outcome the
 supervisor already recorded.
+
+## Files an isolated worktree does not get (`worktree.copy`)
+
+`git worktree add` populates a tree from **HEAD**, so an isolated role sees
+tracked files and nothing else. For most untracked files that is the point of
+the isolation. For a project's own configuration it is not: the agent runs the
+project's tests against an environment missing the one value that makes them
+work, and reports a failure whose message is about something else entirely.
+
+`worktree.copy` names the files that have to cross anyway. It is empty by
+default, and an empty list costs no extra git call.
+
+```yaml
+worktree:
+  copy:
+    - .env
+```
+
+Each entry is a path **relative to the project root**, and the file lands at
+the same relative path inside the worktree. Same path in both trees is not a
+simplification: `.gitignore` matches on the path, so a file arriving where its
+rule expects it is covered by the same rule in both trees. There is deliberately
+no rename form — a renamed destination would need its own separately verified
+ignore rule.
+
+### What it refuses, and why each refusal is a refusal
+
+A dispatch stops rather than warning and continuing. Four of the five checks
+run at the **dispatch gate**, before `git worktree add` creates anything; the
+fifth needs the worktree and runs immediately after it exists, before the agent
+is started.
+
+| Situation | Why it is not a warning |
+| :--- | :--- |
+| The source does not exist | The exact failure this list exists to prevent. A silently absent credential surfaces inside the run as an unrelated-looking test failure, and nothing downstream can tell that from a real one. |
+| The source is outside the project root | A worktree is a checkout of this repository; there is nowhere in it that a file from elsewhere belongs. Checked after resolving symlinks. |
+| The source is a directory | Naming a directory reads as "and everything under it" — a much larger promise than this list makes. Name the files. |
+| The source is tracked at HEAD | The worktree already has HEAD's copy. Overwriting it with the working tree's version hands an isolated agent uncommitted content, which is the one thing the isolation is for. |
+| The destination is **not** ignored in the worktree | The leak. An untracked file git does not ignore is one `git add -A` away from being committed onto the slice branch by the agent itself. |
+
+The last check is asked of the **worktree's** git, never of the project root's,
+and the difference is load-bearing: a worktree checks out HEAD, so an ignore
+rule you have written but not committed is *not in force where the agent runs*.
+Asking your main tree would answer "ignored" for exactly the case that leaks.
+
+Two further properties worth knowing:
+
+* **All or nothing.** Every entry is checked before any is written, so a
+  refusal leaves the worktree exactly as git built it. A half-provisioned tree
+  is an incomplete environment nothing downstream can see — the condition this
+  feature exists to remove.
+* **The copy dies with the worktree.** `close-slice` removes the worktree with
+  `git worktree remove`, which deletes the directory outright. Nothing is ever
+  written back into the main tree.
+
+`dispatch` prints what crossed:
+
+```
+Copied into the worktree: .env
+```
+
+That line is not decoration. At least one of these files is normally a
+credential, and a secret entering a tree an autonomous agent is about to work
+in should not be something you discover afterwards from a directory listing.
+
+### Why not `sandbox.env`
+
+`sandbox.env` injects into the agent's **process environment**, and for a
+settings library that reads the environment first that genuinely works — it is
+how `pg_dsn` and `qdrant_url` reach a dispatched agent. It is not a substitute
+for a file, because using it as one means enumerating every variable the project
+needs in `agents.yaml`, writing each as `${name}` so it expands from the
+*dispatcher's* environment — putting the project's secrets in the human's shell,
+which is the thing `.env` exists to avoid — and keeping that list in sync by
+hand with no failure signal when it drifts. `agents.yaml` is also a tracked
+file, so the enumeration would live next to the thing it must not contain.
+
+Use `sandbox.env` for values the orchestrator computes (addresses, project
+names). Use `worktree.copy` for a file the project already owns.
 
 ## Sandbox (per-slice infrastructure)
 

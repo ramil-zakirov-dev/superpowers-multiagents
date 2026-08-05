@@ -194,6 +194,8 @@ would split a directory from the file written into it.
 
 The `.superpowers/sandbox/` directory holds orchestrator state (allocation records for docker-compose projects) rather than slice payload, which is why it does not live under `.worktrees/`.
 
+A worktree is created from HEAD and therefore holds tracked files only. `scripts/provision.py` copies the files a project declares in `worktree.copy` into it after creation and before the agent starts, refusing any entry that is absent, outside the project root, already tracked at HEAD, or would land where the worktree's own git does not ignore it. Nothing is written back into the main tree, and `git worktree remove` destroys the copies with the directory.
+
 `git_ops.check_working_tree_clean` ignores exactly these prefixes, so the
 orchestrator's own output cannot block its own merge. The user's `.gitignore`
 is never written to; `dispatch-agent` prints a hint instead.

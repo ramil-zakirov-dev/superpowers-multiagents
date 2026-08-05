@@ -229,6 +229,15 @@ it yourself; `close-slice` removes it after the merge, and a failed dispatch
 leaves it in place on purpose, so the transcript and the work are still there to
 read.
 
+**A worktree contains HEAD and nothing else.** Your `.env` is gitignored by
+construction, so it does not arrive — and an agent running the project's own
+tests without it reports a failure whose message is about something else. Name
+the files that have to cross in `worktree.copy`, and the dispatcher copies them
+in after refusing the four ways that could go wrong (absent, outside the
+project, already tracked, or not ignored where it lands — the last being one
+`git add -A` from a secret in your branch history). See
+[docs/configuration.md](docs/configuration.md#files-an-isolated-worktree-does-not-get-worktreecopy).
+
 ---
 
 ## 🗂 Runtime Artifacts
