@@ -105,12 +105,21 @@ python "<orchestrator>" set-status --file docs/superpowers/plans/YYYY-MM-DD-slic
 
 ### 5. Verify & Close Slice (When Execution is `EXECUTION_COMPLETE`)
 
-`VERIFIED_CLOSED` must target the **plan** file, not the design spec: the
-executor's `EXECUTION_COMPLETE` lands on whichever file it was dispatched
-against (the plan), and `VERIFIED_CLOSED` is only a legal transition from
-`EXECUTION_COMPLETE`. Running this against the spec file fails closed —
-merge-then-mark ordering means nothing is merged or deleted before the
-check, but the command exits non-zero either way.
+`VERIFIED_CLOSED` targets the **plan** file: the executor's
+`EXECUTION_COMPLETE` lands on whichever file it was dispatched against, and
+`VERIFIED_CLOSED` is only a legal transition from there. Run it against the
+spec of a slice that is not yet closed and it fails closed, naming the plan
+and its current status — merge-then-mark ordering means nothing is merged or
+deleted before that check.
+
+Closing the plan **also closes the slice's spec**. A spec's own path ends at
+`PLAN_GENERATED`, so without that it would sit there for good, and for a slice
+that never had a plan the dependency gate reads the spec and blocks every
+dependent forever. That closure is recorded rather than transitioned, on one of
+two grounds: the plan on disk is already `VERIFIED_CLOSED` (observed), or the
+slice has no plan at all and `--skip-merge` states that the work landed outside
+the pipeline (asserted). A slice at a role's in-progress status is refused under
+both — `reconcile` is the command for a dispatch that never came back.
 
 Commit the executor's `EXECUTION_COMPLETE` status write before running
 this — `set-status` requires the tree to be clean (aside from the

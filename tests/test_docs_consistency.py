@@ -58,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.13.0"
+    assert manifest["version"] == "2.14.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -377,7 +377,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.13.0"
+    assert plugin["version"] == package["version"] == "2.14.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
@@ -772,4 +772,48 @@ def test_the_worktree_provisioning_contract_is_documented():
     assert "git worktree remove" in CONFIGURATION
     assert "worktree.copy" in README, (
         "README never tells a user the feature exists"
+    )
+
+
+def test_the_slice_closure_contract_is_documented():
+    """Three claims: that the spec closes with the plan, that this is recorded
+    rather than transitioned, and the two grounds admitted for it."""
+    assert "What closing a slice writes" in CONFIGURATION
+    assert "recorded rather" in CONFIGURATION.lower()
+    for ground in ("Observed", "Asserted"):
+        assert ground in CONFIGURATION, f"the '{ground}' ground is undocumented"
+
+
+def test_the_skill_no_longer_says_a_spec_can_never_be_closed():
+    """SKILL.md and close-slice.md are what a model reads at the gate itself.
+    Both said VERIFIED_CLOSED "must target the plan file, not the design spec",
+    which stopped being true when closure became recordable — and a stale
+    instruction at a gate is worse than none, because it is obeyed.
+    """
+    close_slice = (COMMANDS_DIR / "close-slice.md").read_text(encoding="utf-8")
+    for name, text in (("SKILL.md", SKILL), ("close-slice.md", close_slice)):
+        assert "not the design spec" not in text, (
+            f"{name} still forbids what the orchestrator now allows"
+        )
+    assert "--skip-merge" in close_slice
+    assert "fourth refusal" in close_slice, (
+        "close-slice.md does not tell the model what to do with a spec whose "
+        "slice has no plan — the refusal it is most likely to meet first"
+    )
+
+
+def test_the_documented_gate_count_matches_the_code():
+    """The prose states a number, and a slice that adds a gate has to move it.
+
+    Counted from the source rather than hardcoded here: the previous slice
+    added the Provision Gate and left the doc saying "four".
+    """
+    import re as _re
+
+    source = (REPO_ROOT / "scripts" / "orchestrator.py").read_text(encoding="utf-8")
+    gates = set(_re.findall(r"\[(\w+) Gate\]", source))
+    words = {4: "four", 5: "five", 6: "six", 7: "seven"}
+    assert f"**Before it starts**, {words[len(gates)]} gates run" in CONFIGURATION, (
+        f"orchestrator.py has {len(gates)} gates ({sorted(gates)}), and "
+        f"configuration.md states a different number"
     )

@@ -387,11 +387,13 @@ keys in `hooks.yaml`.
 
 A dispatch is a contract, and it is worth knowing which half is enforced.
 
-**Before it starts**, four gates run — dependencies met, the document is not a
-milestone brief, its status is one the role accepts, and (for an isolated
-role) it is committed on the branch the worktree forks from. All of them run
-before the first irreversible mutation, so a refused dispatch leaves the
-slice exactly as it was.
+**Before it starts**, five gates run — dependencies met, the document is not a
+milestone brief, its status is one the role accepts, and, for an isolated role,
+it is committed on the branch the worktree forks from and every file in
+[`worktree.copy`](#files-an-isolated-worktree-does-not-get-worktreecopy) is
+there to copy. All of them run before the first irreversible mutation, so a
+refused dispatch leaves the slice exactly as it was — no branch, no worktree,
+no lock.
 
 **The document's path** reaches the agent relative to the project root, in
 posix form. A worktree is a checkout of the same layout, so that one path is
@@ -431,6 +433,48 @@ branch with nothing on it is flagged on sight.
   [EXECUTION_COMPLETE ] 2026-08-05-foo-plan.md - ...
                         ⚠ feat/foo has no commits; close-slice would merge nothing
 ```
+
+## What closing a slice writes
+
+`close-slice` targets the **plan**, because the plan is where execution's
+terminal statuses land. But a slice has two documents and one life, and the
+spec's own path ends at `PLAN_GENERATED` — `VERIFIED_CLOSED` is reachable only
+from `EXECUTION_COMPLETE` or `MERGE_CONFLICT`, which are claims about a plan.
+Left alone, every closed slice strands a design document reading as though it
+were still waiting for someone.
+
+That is mostly a misreport, and for one shape it is not. `resolve_document`
+prefers `plans/`, so while a plan exists it answers for the slice and the stale
+spec misleads only the human reading `status`. **A slice that never had a plan
+has no plan to prefer** — the spec is the answer, it can never reach a terminal
+status, and so every slice declaring it in `depends_on` is blocked and every
+milestone listing it can never be closed.
+
+So closing a plan also closes its spec, and the closure is **recorded rather
+than transitioned**. The distinction is not pedantry: both documents are one
+kind and share one transition table, so adding `PLAN_GENERATED →
+VERIFIED_CLOSED` to it would have said that a *plan* may be closed without ever
+being approved or executed. What is written is narrower — the slice closed, and
+that fact belongs on every document carrying its id.
+
+Pointing `close-slice` at a spec directly is therefore allowed, on one of two
+grounds and no third:
+
+| Ground | When | What it means |
+| :--- | :--- | :--- |
+| **Observed** | the slice's plan is already `VERIFIED_CLOSED` | nothing is taken on trust; the evidence is a file on disk |
+| **Asserted** | the slice has no plan, and `--skip-merge` is passed | a human states the work landed outside the pipeline — the same claim that flag already carries |
+
+A document at some role's in-progress status is refused under both. A supervisor
+owns that status, and closing over it would overwrite a dispatch's own outcome
+with a guess about it; [`reconcile`](#waiting-on-a-dispatch-and-recovering-an-abandoned-one)
+is the command for a dispatch that never came back.
+
+Recording a closure is not executing one. The merge, the worktree removal, the
+`on_slice_verified_closed` hook and the sandbox teardown all belong to the
+slice's execution and ran when the plan closed; doing them again for a second
+document would be doing them twice. Closing a spec re-syncs milestone briefs and
+nothing else.
 
 ## Waiting on a dispatch, and recovering an abandoned one
 
