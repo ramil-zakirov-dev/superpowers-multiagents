@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-02-native-sandbox"
 title: "Native sandbox: per-slice infrastructure isolation owned by the orchestrator"
-status: PLAN_GENERATED
+status: VERIFIED_CLOSED
 target_version: "2.1.0"
 depends_on: ["slice-01-orchestrator-hardening"]
 ---

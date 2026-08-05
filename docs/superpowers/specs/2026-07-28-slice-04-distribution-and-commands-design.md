@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-04-distribution-and-commands"
 title: "Distribution and commands: make the plugin installable, and make the operating procedure executable"
-status: PLAN_GENERATED
+status: VERIFIED_CLOSED
 target_version: "2.3.0"
 depends_on: []
 ---

@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-07-isolated-dispatch-contract"
 title: "Isolated dispatch: hand the agent a path both trees agree on, and check that its work landed on the branch"
-status: SPEC_APPROVED
+status: VERIFIED_CLOSED
 target_version: "2.11.0"
 depends_on: []
 lenses:

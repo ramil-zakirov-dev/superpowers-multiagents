@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-06-abandoned-dispatch"
 title: "Abandoned dispatch: notice a supervisor that never came back, say so, and offer a way out"
-status: FAILED
+status: VERIFIED_CLOSED
 target_version: "2.10.0"
 depends_on: []
 lenses:

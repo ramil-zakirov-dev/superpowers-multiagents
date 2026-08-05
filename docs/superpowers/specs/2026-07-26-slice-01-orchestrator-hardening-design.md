@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-01-orchestrator-hardening"
 title: "Orchestrator hardening: runnable entry point, supervised lifecycle, honest invariants"
-status: PLAN_GENERATED
+status: VERIFIED_CLOSED
 target_version: "2.0.0"
 depends_on: []
 ---
