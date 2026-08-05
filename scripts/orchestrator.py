@@ -840,6 +840,60 @@ def cmd_reconcile(args):
     print("Re-enter the pipeline from FAILED via SPEC_APPROVED or PLAN_APPROVED.")
 
 
+def _report_wait_result(slice_id: str, document: Path, project_root: Path, result) -> int:
+    """Print the last line and return the exit code.
+
+    The last line names the terminal status, the elapsed time and the log
+    path, so the caller needs no second command. The abandoned branch names
+    `reconcile` rather than leaving the operator to look it up.
+    """
+    log = abandonment.latest_log(project_root, slice_id) or "(no log found)"
+    if result.outcome == abandonment.OUTCOME_TERMINAL:
+        print(
+            f"Slice '{slice_id}' reached '{result.status}' after "
+            f"{result.elapsed:.0f}s. Log: {log}"
+        )
+        return 0
+    if result.outcome == abandonment.OUTCOME_ABANDONED:
+        evidence = abandonment.lock_evidence(slice_id, project_root)
+        print(
+            f"Slice '{slice_id}' is abandoned after {result.elapsed:.0f}s: "
+            f"{evidence}."
+        )
+        print(f"Status is still '{result.status}'. Log: {log}")
+        print(f"Audit the work, then run: reconcile --file {document} --yes")
+        return 2
+    print(
+        f"Timed out after {result.elapsed:.0f}s; slice '{slice_id}' is still "
+        f"'{result.status}'. Log: {log}"
+    )
+    return 1
+
+
+def cmd_wait(args):
+    """Block until a slice's dispatch ends — by finishing or by abandonment."""
+    base_dir = Path(args.dir) if args.dir else Path("docs/superpowers")
+    project_root = find_project_root(base_dir.resolve())
+
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(3)
+
+    document = abandonment.find_slice_document(base_dir, args.slice)
+    if document is None:
+        print(f"Error: no document under {base_dir} carries slice_id '{args.slice}'.")
+        sys.exit(3)
+
+    result = abandonment.wait_for_dispatch(
+        document, project_root, config, args.slice,
+        timeout=args.timeout, poll=args.poll,
+    )
+    sys.exit(_report_wait_result(args.slice, document, project_root, result))
+
+
 def cmd_milestone(args):
     """Milestone brief lifecycle: create, sync track state, check completeness.
 
@@ -953,6 +1007,30 @@ def main():
         "--yes", action="store_true", help="Apply the move to FAILED"
     )
 
+    # wait
+    p_wait = subparsers.add_parser(
+        "wait",
+        help="Block until a slice's dispatch ends "
+             "(exit 0 finished, 2 abandoned, 1 timeout, 3 cannot start)",
+    )
+    p_wait.add_argument("--slice", required=True, help="Slice ID to wait on")
+    # NOTE (architect, audit gate): `--dir` here means the *docs base*, matching
+    # `status`, not the *project root*, which is what it means for `sandbox`,
+    # `trigger-hook` and `summary`. That split is issue #11 and this slice does
+    # not resolve it — but do not invent a third meaning: keep `wait` identical
+    # to `status`, so whatever #11 settles can change both together.
+    p_wait.add_argument(
+        "--dir", default="docs/superpowers", help="Base superpowers directory (as in `status`)"
+    )
+    p_wait.add_argument(
+        "--timeout", type=float, default=None,
+        help="Give up after S seconds (default: never)",
+    )
+    p_wait.add_argument(
+        "--poll", type=float, default=abandonment.DEFAULT_POLL_SECONDS,
+        help="Seconds between checks (default: 15)",
+    )
+
     # sandbox
     p_sandbox = subparsers.add_parser("sandbox", help="Per-slice infrastructure sandbox")
     p_sandbox.add_argument(
@@ -1008,6 +1086,8 @@ def main():
         cmd_summary(args)
     elif args.command == "reconcile":
         cmd_reconcile(args)
+    elif args.command == "wait":
+        cmd_wait(args)
     elif args.command == "sandbox":
         cmd_sandbox(args)
     elif args.command == "milestone":

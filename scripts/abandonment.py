@@ -13,10 +13,13 @@ flag would go stale the moment someone re-dispatches.
 """
 
 import json
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
+from scripts.frontmatter import parse_frontmatter
 from scripts.locks import _lock_is_held
-from scripts.paths import lock_path
+from scripts.paths import lock_path, logs_dir
 from scripts.utils import _is_process_alive
 
 
@@ -82,3 +85,77 @@ def lock_evidence(slice_id: str, project_root: Path, *, is_alive=_is_process_ali
     if data.get("state") == "starting":
         return f"lock at {lock_file} is still 'starting' — the supervisor never claimed it"
     return f"lock at {lock_file} is in state {data.get('state')!r}"
+
+
+DEFAULT_POLL_SECONDS = 15.0
+
+OUTCOME_TERMINAL = "terminal"
+OUTCOME_ABANDONED = "abandoned"
+OUTCOME_TIMED_OUT = "timed_out"
+
+
+def find_slice_document(base_dir: Path, slice_id: str) -> Path | None:
+    """The specs/ or plans/ document carrying this slice_id, if one exists."""
+    for subdir in ("specs", "plans"):
+        directory = Path(base_dir) / subdir
+        if not directory.is_dir():
+            continue
+        for candidate in sorted(directory.glob("*.md")):
+            if candidate.stem == slice_id:
+                return candidate
+            data = parse_frontmatter(candidate.read_text(encoding="utf-8"))
+            if data.get("slice_id") == slice_id:
+                return candidate
+    return None
+
+
+def latest_log(project_root: Path, slice_id: str) -> Path | None:
+    """The newest log mentioning this slice, or None — same rule as `summary`."""
+    directory = logs_dir(project_root)
+    matching = sorted(directory.glob(f"*{slice_id}*.log")) if directory.exists() else []
+    if not matching:
+        return None
+    return max(matching, key=lambda path: path.stat().st_mtime)
+
+
+@dataclass
+class WaitResult:
+    outcome: str   # OUTCOME_TERMINAL | OUTCOME_ABANDONED | OUTCOME_TIMED_OUT
+    status: str    # the document's status at the moment the wait ended
+    elapsed: float
+
+
+def wait_for_dispatch(
+    document: Path,
+    project_root: Path,
+    config: dict,
+    slice_id: str,
+    *,
+    timeout: float | None = None,
+    poll: float = DEFAULT_POLL_SECONDS,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+    is_alive=_is_process_alive,
+) -> WaitResult:
+    """Block while the slice is in progress and a live supervisor owns it.
+
+    The watched thing takes minutes, so the default poll is 15s — a tighter
+    loop only burns wakeups. The default timeout is none: the caller that
+    backgrounds this process has its own, and a timeout belongs at the
+    boundary that can act on it. Liveness and the clock are injectable so
+    the tests are fast and not flaky.
+    """
+    in_progress = in_progress_statuses(config)
+    started = monotonic()
+    while True:
+        status = parse_frontmatter(
+            Path(document).read_text(encoding="utf-8")
+        ).get("status", "UNKNOWN")
+        elapsed = monotonic() - started
+        if status not in in_progress:
+            return WaitResult(OUTCOME_TERMINAL, status, elapsed)
+        if is_abandoned(status, slice_id, project_root, in_progress, is_alive=is_alive):
+            return WaitResult(OUTCOME_ABANDONED, status, elapsed)
+        if timeout is not None and elapsed >= timeout:
+            return WaitResult(OUTCOME_TIMED_OUT, status, elapsed)
+        sleep(poll)
