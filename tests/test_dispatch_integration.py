@@ -352,3 +352,40 @@ def test_no_skills_asks_the_harness_nothing(tmp_project, demo_spec, monkeypatch,
         f"list_skills was called {skills_log.read_text(encoding='utf-8').count(chr(10))} "
         f"time(s) for a role that declares no skills"
     )
+
+
+def test_dispatch_wait_blocks_until_the_supervisor_reports(tmp_project, demo_spec):
+    _use_slow_agent(tmp_project, seconds=3)
+    args = _args(demo_spec)
+    args.wait = True
+    args.poll = 0.2
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_dispatch_agent(args)
+
+    assert excinfo.value.code == 0
+    # The slow agent produces no plan, so runner._missing_artifact
+    # marks the slice FAILED. --wait correctly observed the dispatch
+    # ending and returned exit 0.
+    assert (
+        parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+        == "FAILED"
+    )
+
+
+def test_dispatch_without_wait_returns_before_the_agent_finishes(tmp_project, demo_spec):
+    """The default stays non-blocking: dispatch returns at spawn, and the
+    document still claims its in-progress status when it does. A caller that
+    backgrounds plain dispatch is notified the instant the supervisor is
+    *spawned* — precisely the useless signal --wait exists to replace."""
+    _use_slow_agent(tmp_project, seconds=20)
+    cmd_dispatch_agent(_args(demo_spec))     # no wait attribute at all
+
+    assert (
+        parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+        == "PLANNING"
+    )
+
+    data = _wait_for_lock_state(lock_path(tmp_project, "slice-01-demo"), "running")
+    if data:                                 # don't leak a 20s sleeper
+        _kill_tree(data["pid"])

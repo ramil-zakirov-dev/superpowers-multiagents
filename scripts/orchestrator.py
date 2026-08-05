@@ -620,6 +620,18 @@ def cmd_dispatch_agent(args):
     _warn_if_near_miss_branch(slice_id, project_root)
     _warn_if_artifacts_not_ignored(project_root)
 
+    if getattr(args, "wait", False):
+        # dispatch --wait is dispatch followed by wait in one process: the
+        # form a harness actually backgrounds. Backgrounding plain dispatch
+        # notifies the instant the supervisor is *spawned* — precisely the
+        # useless signal a caller has without this flag. The default (no
+        # flag) is unchanged: non-blocking, returning here at spawn.
+        result = abandonment.wait_for_dispatch(
+            target_file, project_root, config, slice_id,
+            poll=getattr(args, "poll", None) or abandonment.DEFAULT_POLL_SECONDS,
+        )
+        sys.exit(_report_wait_result(slice_id, target_file, project_root, result))
+
 
 def _quote_posix(value: str) -> str:
     if re.fullmatch(r"[A-Za-z0-9_\-./:=]+", value):
@@ -978,16 +990,43 @@ def main():
     p_agent.add_argument("--role", required=True, help="Agent role (e.g., planner, executor)")
     p_agent.add_argument("--file", required=True, help="Path to target markdown file")
     p_agent.add_argument("--model", help="Override LLM model")
+    p_agent.add_argument(
+        "--wait", action="store_true",
+        help="Block until the dispatch ends, then exit with its outcome "
+             "(0 finished, 2 abandoned, 1 timeout)",
+    )
+    p_agent.add_argument(
+        "--poll", type=float, default=None,
+        help="With --wait: seconds between checks (default: 15)",
+    )
 
     # dispatch-planner (backward-compat alias)
     p_plan = subparsers.add_parser("dispatch-planner", help="[Alias] Dispatch planner for a spec")
     p_plan.add_argument("--spec", required=True, help="Path to design spec file")
     p_plan.add_argument("--model", help="Override LLM model")
+    p_plan.add_argument(
+        "--wait", action="store_true",
+        help="Block until the dispatch ends, then exit with its outcome "
+             "(0 finished, 2 abandoned, 1 timeout)",
+    )
+    p_plan.add_argument(
+        "--poll", type=float, default=None,
+        help="With --wait: seconds between checks (default: 15)",
+    )
 
     # dispatch-executor (backward-compat alias)
     p_exec = subparsers.add_parser("dispatch-executor", help="[Alias] Dispatch executor for a plan")
     p_exec.add_argument("--plan", required=True, help="Path to plan file")
     p_exec.add_argument("--model", help="Override LLM model")
+    p_exec.add_argument(
+        "--wait", action="store_true",
+        help="Block until the dispatch ends, then exit with its outcome "
+             "(0 finished, 2 abandoned, 1 timeout)",
+    )
+    p_exec.add_argument(
+        "--poll", type=float, default=None,
+        help="With --wait: seconds between checks (default: 15)",
+    )
 
     # summary
     p_sum = subparsers.add_parser("summary", help="Show execution summary log for audit")
