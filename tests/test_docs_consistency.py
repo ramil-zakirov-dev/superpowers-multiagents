@@ -58,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.10.0"
+    assert manifest["version"] == "2.11.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -377,7 +377,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.10.0"
+    assert plugin["version"] == package["version"] == "2.11.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
@@ -722,3 +722,14 @@ def test_wait_and_reconcile_are_documented():
     assert "reconcile" in CONFIGURATION
     assert "--wait" in CONFIGURATION
     assert "kill -0" in CONFIGURATION
+
+
+def test_the_dispatch_contract_is_documented():
+    """A dispatch now records FAILED for an isolated run that left no commits.
+    An operator meeting that verdict has to be able to find out why, and what
+    the check does not cover — a guarantee nobody wrote down is one nobody can
+    rely on or argue with.
+    """
+    assert "What a dispatch promises, and what it verifies" in CONFIGURATION
+    assert "counting is not reviewing" in CONFIGURATION.lower()
+    assert "git branch --show-current" in CONFIGURATION

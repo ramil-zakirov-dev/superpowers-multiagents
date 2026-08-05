@@ -354,6 +354,55 @@ Adding a role also extends the hook event set below: a `reviewer` role makes
 `on_slice_reviewer_start`, `on_reviewer_complete` and `on_reviewer_failed` valid
 keys in `hooks.yaml`.
 
+## What a dispatch promises, and what it verifies
+
+A dispatch is a contract, and it is worth knowing which half is enforced.
+
+**Before it starts**, four gates run — dependencies met, the document is not a
+milestone brief, its status is one the role accepts, and (for an isolated
+role) it is committed on the branch the worktree forks from. All of them run
+before the first irreversible mutation, so a refused dispatch leaves the
+slice exactly as it was.
+
+**The document's path** reaches the agent relative to the project root, in
+posix form. A worktree is a checkout of the same layout, so that one path is
+correct whether the agent is standing in the project root or in
+`.worktrees/<slice_id>`. An absolute path would name the project root's copy
+only — hand that to an isolated agent and it works in the tree it was kept
+out of, which is how a run once put its commits on the branch a human had
+checked out while its own branch stayed empty. If the executor log's first
+`git branch --show-current` says anything other than `feat/<slice_id>`, the
+isolation did not take.
+
+**When it ends**, the supervisor asks what the run left behind before writing
+any success status. What counts as "left behind" depends on the role:
+
+| Role | Artifact | Failure to produce it |
+|---|---|---|
+| `isolated_worktree: true` | commits on `feat/<slice_id>` since the branch tip recorded at dispatch | `FAILED` |
+| declares `produces` | a document under that directory carrying the slice's `slice_id` and a `status` | `FAILED` |
+| neither | nothing to check | success status |
+
+The commit count is taken against the branch tip as it stood when the
+worktree came into existence, not against your main branch. A re-dispatch
+attaches to a branch that may already carry an earlier run's commits, and
+counting from the main branch would credit this run with that work.
+
+Two things this deliberately does **not** do. It does not judge the content
+of the commits — counting is not reviewing, and five junk commits pass; the
+audit before `close-slice` is where work gets judged, and it is still yours.
+And it does not detect an agent that commits to the slice branch *and* dirties
+another tree; that run passes the check.
+
+A run whose supervisor died never reaches this check at all. `status` is the
+second net there: a slice claiming an isolated role's success status over a
+branch with nothing on it is flagged on sight.
+
+```
+  [EXECUTION_COMPLETE ] 2026-08-05-foo-plan.md - ...
+                        ⚠ feat/foo has no commits; close-slice would merge nothing
+```
+
 ## Waiting on a dispatch, and recovering an abandoned one
 
 `dispatch` returns immediately by design: the supervisor it spawns is
