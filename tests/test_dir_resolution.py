@@ -209,3 +209,32 @@ def test_status_from_a_directory_with_no_project_says_so(tmp_path):
     assert result.returncode != 0
     assert "ModuleNotFoundError" not in result.stderr
     assert "docs/superpowers" in result.stdout.replace("\\", "/")
+
+
+def test_the_refusal_with_no_argument_names_the_working_directory(tmp_path):
+    """With no `--dir`, the default is the cwd read as a project root — not the
+    literal `docs/superpowers`, which made the refusal quote a doubled path
+    (`<cwd>/docs/superpowers/docs/superpowers`) and read as a bug in the tool
+    rather than as a wrong place to have run it.
+    """
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "orchestrator.py"), "status"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    out = result.stdout.replace("\\", "/")
+    root = str(tmp_path.resolve()).replace("\\", "/")
+
+    assert f"{root}/docs/superpowers" in out
+    assert "docs/superpowers/docs/superpowers" not in out
+
+
+def test_no_argument_finds_the_pipeline_from_the_project_root(tmp_path):
+    _pipeline(tmp_path, spec='---\nslice_id: "s"\nstatus: SPEC_APPROVED\n---\n# S\n')
+
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "orchestrator.py"), "status"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SPEC_APPROVED" in result.stdout

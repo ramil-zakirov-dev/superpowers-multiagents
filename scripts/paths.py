@@ -130,8 +130,8 @@ def resolve_docs_base(given: Path, *, must_exist: bool = True) -> Path:
         f"No superpowers documents directory at '{given}'. Looked for "
         f"'{nested}' (reading it as a project root) and for "
         f"{'/'.join(DOCUMENT_DIRNAMES)} directly inside it (reading it as the "
-        f"docs base). Point --dir at the project root, or create the layout "
-        f"with `milestone new`."
+        f"docs base). Point --docs-dir at the project root, or create the "
+        f"layout with `milestone new`."
     )
 
 

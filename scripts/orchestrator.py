@@ -39,7 +39,7 @@ from scripts.git_ops import (
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock, release_slice_lock_file
 from scripts.paths import (
-    ARTIFACT_PREFIXES, DOCS_BASE_PARTS, DOCUMENT_DIRNAMES, document_prompt_path,
+    ARTIFACT_PREFIXES, DOCUMENT_DIRNAMES, document_prompt_path,
     lock_path, log_path, logs_dir, resolve_docs_base,
 )
 from scripts import abandonment
@@ -181,9 +181,13 @@ def _docs_base(given, *, must_exist: bool = True, exit_code: int = 1) -> Path:
     "I could not look" with a real outcome that the rest of this module
     exists to prevent.
     """
+    # No argument means the working directory, resolved as a project root — not
+    # the literal `docs/superpowers`, which would make the refusal name a
+    # doubled path (`<cwd>/docs/superpowers/docs/superpowers`) and read as a
+    # bug in the tool rather than a wrong place to have run it.
     try:
         return resolve_docs_base(
-            Path(given) if given else Path(*DOCS_BASE_PARTS), must_exist=must_exist
+            Path(given) if given else Path.cwd(), must_exist=must_exist
         )
     except OrchestratorError as exc:
         print(f"Error: {exc}")
@@ -1070,8 +1074,8 @@ def main():
     # status
     p_status = subparsers.add_parser("status", help="Show status of all milestones, specs, and plans")
     p_status.add_argument(
-        *DOCS_DIR_FLAGS, dest="dir", default="docs/superpowers",
-        help="Docs base, or the project root holding it",
+        *DOCS_DIR_FLAGS, dest="dir", default="",
+        help="Docs base, or the project root holding it (default: cwd)",
     )
     p_status.add_argument(
         "--all", action="store_true",
@@ -1176,8 +1180,8 @@ def main():
     # Identical to `status`, as the note left here at the previous slice's
     # audit gate required: both were changed together when #11 was settled.
     p_wait.add_argument(
-        *DOCS_DIR_FLAGS, dest="dir", default="docs/superpowers",
-        help="Docs base, or the project root holding it (as in `status`)",
+        *DOCS_DIR_FLAGS, dest="dir", default="",
+        help="Docs base, or the project root holding it (default: cwd, as in `status`)",
     )
     p_wait.add_argument(
         "--timeout", type=float, default=None,
@@ -1214,8 +1218,8 @@ def main():
     p_ms_new.add_argument("--id", required=True, help="Milestone id, e.g. milestone-1")
     p_ms_new.add_argument("--title", required=True, help="Milestone title")
     p_ms_new.add_argument(
-        *DOCS_DIR_FLAGS, dest="dir", default="docs/superpowers",
-        help="Docs base, or the project root holding it (created if absent)",
+        *DOCS_DIR_FLAGS, dest="dir", default="",
+        help="Docs base, or the project root holding it (default: cwd; created if absent)",
     )
 
     p_ms_sync = milestone_actions.add_parser("sync", help="Refresh track state")
