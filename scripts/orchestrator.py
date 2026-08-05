@@ -183,6 +183,7 @@ def cmd_status(args):
         # not worth refusing to say what is on disk.
         config = DEFAULT_CONFIG
     in_progress = abandonment.in_progress_statuses(config)
+    isolated_success = abandonment.isolated_success_statuses(config)
 
     print("\n=======================================================")
     print("   SUPERPOWERS MULTI-AGENTS STATUS REPORT")
@@ -231,6 +232,17 @@ def cmd_status(args):
                 if abandonment.is_abandoned(label, slice_id, project_root, in_progress):
                     evidence = abandonment.lock_evidence(slice_id, project_root)
                     print(f"{'':23}⚠ abandoned: {evidence}; run `reconcile`")
+            # The mirror image, one gate later: a status claiming an isolated
+            # role succeeded, over a branch carrying nothing it could have
+            # succeeded at. The supervisor checks this itself when it lives to
+            # do so; a status written by hand after a dead supervisor never
+            # was checked, and that is the slice that reaches close-slice
+            # unverified.
+            elif label in isolated_success:
+                slice_id = data.get("slice_id", filepath.stem)
+                empty = abandonment.empty_slice_branch(slice_id, project_root)
+                if empty:
+                    print(f"{'':23}⚠ {empty}")
 
         if unadopted:
             print(

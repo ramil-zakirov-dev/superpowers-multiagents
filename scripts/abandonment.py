@@ -1,4 +1,13 @@
-"""Abandoned-dispatch detection: a derived fact, never a stored one.
+"""Contradictions between what a document claims and what can be observed.
+
+Every fact here is derived on read and none is ever written down. A stored
+"abandoned" or "empty branch" flag would go stale the moment someone
+re-dispatches, and a report that repairs what it finds is a worse instrument
+than one that merely says what it sees.
+
+---
+
+Abandoned-dispatch detection: a derived fact, never a stored one.
 
 A slice is abandoned when its document sits at some role's in_progress_status
 while no live supervisor owns it — the slice's lock is absent, unreadable, or
@@ -19,6 +28,7 @@ from pathlib import Path
 
 from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter
+from scripts.git_ops import branch_exists, commits_since, current_branch
 from scripts.locks import _lock_is_held
 from scripts.paths import lock_path, logs_dir
 from scripts.utils import _is_process_alive
@@ -30,6 +40,42 @@ def in_progress_statuses(config: dict) -> set[str]:
         agent.get("in_progress_status")
         for agent in (config.get("agents") or {}).values()
     } - {None}
+
+
+def isolated_success_statuses(config: dict) -> set[str]:
+    """Every status that claims an isolated role finished successfully.
+
+    Read from the config for the same reason `in_progress_statuses` is: a
+    project that renames `EXECUTION_COMPLETE` still deserves to be told when
+    the branch behind that claim is empty.
+    """
+    return {
+        agent.get("success_status")
+        for agent in (config.get("agents") or {}).values()
+        if agent.get("isolated_worktree")
+    } - {None}
+
+
+def empty_slice_branch(slice_id: str, project_root: Path) -> str:
+    """A note when a finished-looking slice has nothing on its branch, or "".
+
+    Derived on read and never stored, like abandonment: the branch can gain
+    commits the moment someone re-dispatches.
+
+    Says nothing when the branch does not exist. That is the ordinary state of
+    a slice that landed and had its branch tidied away, and `close-slice` has
+    its own words for the case where it matters — flagging it here would make
+    the healthy case look like a defect.
+    """
+    branch = f"feat/{slice_id}"
+    if not branch_exists(branch, project_root):
+        return ""
+    count = commits_since(current_branch(project_root), branch, project_root)
+    if count is None or count > 0:
+        return ""
+    return (
+        f"{branch} has no commits; close-slice would merge nothing"
+    )
 
 
 def _read_lock(lock_file: Path) -> dict:
