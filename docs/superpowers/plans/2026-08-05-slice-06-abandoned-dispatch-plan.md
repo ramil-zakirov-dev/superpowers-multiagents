@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-06-abandoned-dispatch"
 title: "Abandoned dispatch implementation plan"
-status: PLAN_APPROVED
+status: EXECUTION_COMPLETE
 target_version: "2.10.0"
 spec: "docs/superpowers/specs/2026-08-05-slice-06-abandoned-dispatch-design.md"
 depends_on: []
@@ -61,7 +61,7 @@ depends_on: []
   - `lock_evidence(slice_id: str, project_root: Path, *, is_alive=_is_process_alive) -> str`
   - `_lock_is_held(data: dict, *, is_alive=_is_process_alive) -> bool` (new keyword, default unchanged)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_abandonment.py`:
 
@@ -193,12 +193,12 @@ def test_lock_evidence_names_the_absent_lock(tmp_path):
     assert "no lock file" in evidence
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_abandonment.py -q -p no:cacheprovider`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.abandonment'`
 
-- [ ] **Step 3: Make `_lock_is_held`'s liveness injectable**
+- [x] **Step 3: Make `_lock_is_held`'s liveness injectable**
 
 In `scripts/locks.py`, change only the signature and the one call site inside `_lock_is_held` (lines 63-79). Everything else in the file is untouched:
 
@@ -222,7 +222,7 @@ def _lock_is_held(data: dict, *, is_alive=_is_process_alive) -> bool:
     return False
 ```
 
-- [ ] **Step 4: Create `scripts/abandonment.py`**
+- [x] **Step 4: Create `scripts/abandonment.py`**
 
 ```python
 """Abandoned-dispatch detection: a derived fact, never a stored one.
@@ -311,17 +311,17 @@ def lock_evidence(slice_id: str, project_root: Path, *, is_alive=_is_process_ali
     return f"lock at {lock_file} is in state {data.get('state')!r}"
 ```
 
-- [ ] **Step 5: Run the new tests to verify they pass**
+- [x] **Step 5: Run the new tests to verify they pass**
 
 Run: `python -m pytest tests/test_abandonment.py -q -p no:cacheprovider`
 Expected: 12 passed
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `python -m pytest -q -p no:cacheprovider`
 Expected: **437 passed** (425 baseline + 12 new)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add scripts/abandonment.py scripts/locks.py tests/test_abandonment.py
@@ -342,7 +342,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `abandonment.in_progress_statuses`, `abandonment.is_abandoned`, `abandonment.lock_evidence` (Task 1).
 - Produces: the annotation line format `⚠ abandoned: <evidence>; run \`reconcile\``, indented 23 columns so it aligns under the document name. Task 3's `reconcile` is the command it names.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_status_report.py`. The file currently imports only `argparse` and `pytest`; extend the import block at the top to:
 
@@ -412,12 +412,12 @@ def test_status_mutates_nothing_it_reports(base, capsys):
 
 Note for the implementer: `cmd_status` resolves `project_root = find_project_root(base_dir.resolve())`; in these tests `base` is `tmp_path/docs/superpowers`, no `.git` exists above it, so the root resolves to `base` itself and locks live at `base/.superpowers/locks/`.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_status_report.py -q -p no:cacheprovider`
 Expected: FAIL — the three annotation tests fail on `assert "abandoned" in out`
 
-- [ ] **Step 3: Implement the annotation**
+- [x] **Step 3: Implement the annotation**
 
 In `scripts/orchestrator.py`, add the import (keep it with the other `from scripts import ...` lines, just above `from scripts import milestone as milestone_mod`):
 
@@ -467,17 +467,17 @@ Then, immediately after the row print (`print(f"  [{(label or 'no status'):<18}]
 
 (The 23-space indent aligns the `⚠` under the document name: 2 leading spaces + `[` + 18-char label + `]` + space.)
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_status_report.py tests/test_abandonment.py -q -p no:cacheprovider`
 Expected: all pass
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `python -m pytest -q -p no:cacheprovider`
 Expected: **441 passed** (437 + 4 new)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/orchestrator.py tests/test_status_report.py
@@ -498,7 +498,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `abandonment.in_progress_statuses`, `abandonment.is_abandoned`, `abandonment.lock_evidence` (Task 1); `milestone_mod.machine_for`, `milestone_mod.SLICE_KIND`, `milestone_mod.MILESTONE_KIND`, `milestone_mod.document_kind`; `update_frontmatter_status`; `release_slice_lock`.
 - Produces: CLI `reconcile --file <document> [--dir DIR] [--yes]`. Exit codes: `0` applied; `1` refusal (live supervisor, terminal status, milestone, bad config, illegal transition); `2` refused for missing `--yes`, evidence printed, nothing mutated.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_reconcile.py`:
 
@@ -631,12 +631,12 @@ def test_reconcile_a_milestone_is_refused(project, tmp_path):
         cmd_reconcile(_args(milestone))
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_reconcile.py -q -p no:cacheprovider`
 Expected: FAIL — `ImportError: cannot import name 'cmd_reconcile' from 'scripts.orchestrator'`
 
-- [ ] **Step 3: Implement `cmd_reconcile`**
+- [x] **Step 3: Implement `cmd_reconcile`**
 
 In `scripts/orchestrator.py`, extend the locks import:
 
@@ -729,7 +729,7 @@ def cmd_reconcile(args):
     print("Re-enter the pipeline from FAILED via SPEC_APPROVED or PLAN_APPROVED.")
 ```
 
-- [ ] **Step 4: Register the command**
+- [x] **Step 4: Register the command**
 
 In `main()`, add the parser next to the `summary` parser:
 
@@ -755,17 +755,17 @@ and the dispatch branch, next to `summary`:
         cmd_reconcile(args)
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_reconcile.py -q -p no:cacheprovider`
 Expected: 6 passed
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `python -m pytest -q -p no:cacheprovider`
 Expected: **447 passed** (441 + 6 new)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add scripts/orchestrator.py tests/test_reconcile.py
@@ -803,7 +803,7 @@ finish, you named something that does not exist". Conflated, a typo in
 `--slice` reads as a slow run and the caller waits forever for it. The human
 message is not enough — the caller reading the code is the one that has to act.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_wait.py`:
 
@@ -986,12 +986,12 @@ def test_cmd_wait_separates_cannot_start_from_timed_out(document, tmp_path, caps
     assert timed_out.value.code != cannot_start.value.code
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_wait.py -q -p no:cacheprovider`
 Expected: FAIL — `AttributeError: module 'scripts.abandonment' has no attribute 'wait_for_dispatch'` (and `ImportError` for `cmd_wait`)
 
-- [ ] **Step 3: Append the wait machinery to `scripts/abandonment.py`**
+- [x] **Step 3: Append the wait machinery to `scripts/abandonment.py`**
 
 Extend the import block at the top of `scripts/abandonment.py` to:
 
@@ -1084,7 +1084,7 @@ def wait_for_dispatch(
         sleep(poll)
 ```
 
-- [ ] **Step 4: Implement `cmd_wait` and `_report_wait_result`**
+- [x] **Step 4: Implement `cmd_wait` and `_report_wait_result`**
 
 In `scripts/orchestrator.py`, immediately after `cmd_reconcile`, add:
 
@@ -1143,7 +1143,7 @@ def cmd_wait(args):
     sys.exit(_report_wait_result(args.slice, document, project_root, result))
 ```
 
-- [ ] **Step 5: Register the command**
+- [x] **Step 5: Register the command**
 
 In `main()`, add the parser next to `reconcile`:
 
@@ -1180,17 +1180,17 @@ and the dispatch branch:
         cmd_wait(args)
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_wait.py -q -p no:cacheprovider`
 Expected: 7 passed
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 Run: `python -m pytest -q -p no:cacheprovider`
 Expected: **454 passed** (447 + 7 new)
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add scripts/abandonment.py scripts/orchestrator.py tests/test_wait.py
@@ -1211,7 +1211,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `abandonment.wait_for_dispatch`, `abandonment.DEFAULT_POLL_SECONDS`, `orchestrator._report_wait_result` (Task 4).
 - Produces: `--wait` and `--poll` flags on `dispatch-agent`, `dispatch-planner`, `dispatch-executor`. Without `--wait`, behaviour is byte-identical to today. With `--wait`, the process exits with the wait outcome: `0` finished, `2` abandoned, `1` timeout.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_dispatch_integration.py`:
 
@@ -1250,12 +1250,12 @@ def test_dispatch_without_wait_returns_before_the_agent_finishes(tmp_project, de
         _kill_tree(data["pid"])
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_dispatch_integration.py::test_dispatch_wait_blocks_until_the_supervisor_reports -q -p no:cacheprovider`
 Expected: FAIL — `DID NOT RAISE SystemExit` (the flag is not threaded yet)
 
-- [ ] **Step 3: Add the flags and the wiring**
+- [x] **Step 3: Add the flags and the wiring**
 
 In `main()`, add to `p_agent` (after its `--model` argument):
 
@@ -1289,17 +1289,17 @@ At the very end of `cmd_dispatch_agent`, after the four `_warn_if_*` calls, add:
         sys.exit(_report_wait_result(slice_id, target_file, project_root, result))
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_dispatch_integration.py -q -p no:cacheprovider`
 Expected: all pass, including the two new ones
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `python -m pytest -q -p no:cacheprovider`
 Expected: **456 passed** (454 + 2 new)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/orchestrator.py tests/test_dispatch_integration.py
@@ -1322,7 +1322,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: everything above; no new code interfaces.
 - Produces: user-facing documentation of `wait`, `reconcile`, `dispatch --wait`, and the Windows `kill -0` trap; plugin version `2.10.0`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_docs_consistency.py`:
 
@@ -1334,12 +1334,12 @@ def test_wait_and_reconcile_are_documented():
     assert "kill -0" in CONFIGURATION
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `python -m pytest tests/test_docs_consistency.py::test_wait_and_reconcile_are_documented -q -p no:cacheprovider`
 Expected: FAIL — `assert 'reconcile' in CONFIGURATION`
 
-- [ ] **Step 3: Add the documentation section**
+- [x] **Step 3: Add the documentation section**
 
 In `docs/configuration.md`, insert this section immediately before `## Infrastructure Hooks (`.superpowers/hooks.yaml`)`:
 
@@ -1395,7 +1395,7 @@ nothing. It refuses outright when a live supervisor owns the slice —
 reconciling a running dispatch would race the runner's own epilogue.
 ````
 
-- [ ] **Step 4: Bump the version to 2.10.0**
+- [x] **Step 4: Bump the version to 2.10.0**
 
 In `.claude-plugin/plugin.json` line 4 and `package.json` line 3, change `"version": "2.9.0"` to `"version": "2.10.0"`. (Additive commands and one new annotation; no breaking change to any existing invocation.)
 
@@ -1403,17 +1403,17 @@ In `tests/test_docs_consistency.py`, update the two pinned literals:
 - line 61: `assert manifest["version"] == "2.10.0"`
 - line 380: `assert plugin["version"] == package["version"] == "2.10.0"`
 
-- [ ] **Step 5: Run the docs tests to verify they pass**
+- [x] **Step 5: Run the docs tests to verify they pass**
 
 Run: `python -m pytest tests/test_docs_consistency.py -q -p no:cacheprovider`
 Expected: all pass, including the new one
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `python -m pytest -q -p no:cacheprovider`
 Expected: **458 passed** (456 + 1 new + 1 from the architect's exit-code amendment)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add docs/configuration.md .claude-plugin/plugin.json package.json tests/test_docs_consistency.py
@@ -1426,6 +1426,6 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ## Verification (whole slice, after Task 6)
 
-- [ ] Full suite green: `python -m pytest -q -p no:cacheprovider` → **458 passed**
-- [ ] `python scripts/orchestrator.py reconcile --help` and `python scripts/orchestrator.py wait --help` both render
-- [ ] `git log --oneline -6` shows six Conventional Commits, each with the trailer
+- [x] Full suite green: `python -m pytest -q -p no:cacheprovider --basetemp=<writable dir>` → **460 passed** (458 as planned, plus 2 from the architect's `--slice` resolution fix)
+- [x] `python scripts/orchestrator.py reconcile --help` and `python scripts/orchestrator.py wait --help` both render
+- [x] `git log --oneline main..feat/slice-06-abandoned-dispatch` shows **eight** Conventional Commits, each with the trailer (six planned, plus the cross-process race fix and the `--slice` resolution fix)
