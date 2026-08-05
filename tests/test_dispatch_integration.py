@@ -402,3 +402,122 @@ def test_dispatch_without_wait_returns_before_the_agent_finishes(tmp_project, de
     data = _wait_for_lock_state(lock_path(tmp_project, "slice-01-demo"), "running")
     if data:                                 # don't leak a 20s sleeper
         _kill_tree(data["pid"])
+
+
+# --- Provisioning a worktree with what git will not put there (issue #12) -----
+
+
+def _git_in(cwd, *args):
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+    )
+
+
+def _isolated_agent_declaring(project_root, copies):
+    """An isolated planner plus a `worktree.copy` list, committed.
+
+    The `.gitignore` has to be *committed*: the worktree checks out HEAD, and
+    an uncommitted rule is not in force where the agent runs.
+    """
+    (project_root / ".gitignore").write_text(".env\n.worktrees/\n", encoding="utf-8")
+    listed = "".join(f"    - {name}\n" for name in copies)
+    (project_root / ".superpowers" / "agents.yaml").write_text(
+        "agents:\n"
+        "  planner:\n"
+        f"    model: {COMMITTING_AGENT!r}\n"
+        "    harness_adapter: 'stub_adapter.py'\n"
+        "    isolated_worktree: true\n"
+        "worktree:\n"
+        "  copy:\n" + listed,
+        encoding="utf-8",
+    )
+    _git_in(project_root, "add", "-A")
+    _git_in(project_root, "commit", "-qm", "ignore .env, declare the copy list")
+
+
+def test_an_isolated_dispatch_provisions_the_declared_file(tmp_project, demo_spec, capsys):
+    """The issue itself: without this the agent's tree has no .env at all."""
+    _isolated_agent_declaring(tmp_project, [".env"])
+    (tmp_project / ".env").write_text("PREMIUM_KEY=dummy-not-real\n", encoding="utf-8")
+
+    cmd_dispatch_agent(_args(demo_spec))
+
+    worktree = tmp_project / ".worktrees" / "slice-01-demo"
+    assert _wait_for(lambda: (worktree / ".env").exists()), (
+        "the declared file never reached the worktree"
+    )
+    assert ".env" in capsys.readouterr().out, (
+        "a secret crossed into the worktree and the operator was not told"
+    )
+
+
+def test_the_agents_own_commit_does_not_take_the_provisioned_secret(
+    tmp_project, demo_spec
+):
+    """The acceptance test for the ignore check, run through a real agent.
+
+    COMMITTING_AGENT does `git add -A` and commits — which is exactly what a
+    real executor does at the end of a task, and exactly what the copied file
+    has to survive.
+    """
+    _isolated_agent_declaring(tmp_project, [".env"])
+    (tmp_project / ".env").write_text("PREMIUM_KEY=dummy-not-real\n", encoding="utf-8")
+
+    cmd_dispatch_agent(_args(demo_spec))
+    assert _wait_for(
+        lambda: parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+        == "PLAN_GENERATED"
+    )
+
+    committed = _git_in(
+        tmp_project, "log", "--name-only", "--format=", "feat/slice-01-demo"
+    ).stdout.split()
+    assert ".env" not in committed, (
+        f"the agent committed the provisioned secret onto its branch: {committed}"
+    )
+    assert (tmp_project / ".worktrees" / "slice-01-demo" / ".env").exists(), (
+        "the file was kept out of the commit by not being there at all"
+    )
+
+
+def test_a_missing_declared_file_refuses_before_anything_is_created(
+    tmp_project, demo_spec
+):
+    """A gate, not a late failure: no lock, no branch, no worktree, and the
+    slice still at the status it was dispatched from."""
+    _isolated_agent_declaring(tmp_project, [".env"])      # .env never created
+
+    with pytest.raises(SystemExit):
+        cmd_dispatch_agent(_args(demo_spec))
+
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
+    assert not lock_path(tmp_project, "slice-01-demo").exists()
+    assert not (tmp_project / ".worktrees").exists()
+    branches = _git_in(tmp_project, "branch", "--list", "feat/slice-01-demo").stdout
+    assert branches.strip() == "", "a branch was created for a dispatch that never ran"
+
+
+def test_a_declaration_does_not_gate_a_role_that_has_no_worktree(
+    tmp_project, demo_spec
+):
+    """`worktree.copy` is about worktrees. A planner runs in the project root,
+    where the file already is (or is legitimately absent), so its dispatch must
+    not be refused for a list that will never be applied to it."""
+    (tmp_project / ".superpowers" / "agents.yaml").write_text(
+        "agents:\n"
+        "  planner:\n"
+        "    model: 'import stub_agent'\n"
+        "    harness_adapter: 'stub_adapter.py'\n"
+        "    isolated_worktree: false\n"
+        "worktree:\n"
+        "  copy:\n"
+        "    - .env\n",
+        encoding="utf-8",
+    )
+
+    cmd_dispatch_agent(_args(demo_spec))
+
+    assert _wait_for(
+        lambda: parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+        == "PLAN_GENERATED"
+    )

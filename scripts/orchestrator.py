@@ -45,6 +45,7 @@ from scripts.paths import (
 from scripts import abandonment
 from scripts import milestone as milestone_mod
 from scripts import produced
+from scripts import provision
 from scripts import sandbox
 from scripts import skills as skills_mod
 from scripts.utils import find_project_root
@@ -529,6 +530,19 @@ def cmd_dispatch_agent(args):
         )
         sys.exit(1)
 
+    # The same tree, from the other side: what HEAD does *not* carry and the
+    # project says the agent needs anyway. Checked here, among the gates, so a
+    # machine that was never configured is refused before `git worktree add`
+    # creates a branch this dispatch would then leave behind. Only sources are
+    # checkable without a worktree; whether the destination is ignored is asked
+    # of the worktree itself, once it exists.
+    if agent_config.get("isolated_worktree"):
+        try:
+            provision.check_sources(config, project_root)
+        except OrchestratorError as exc:
+            print(f"[Provision Gate] Cannot dispatch {role} for {target_file.name}: {exc}")
+            sys.exit(1)
+
     allowed_statuses = agent_config.get("allowed_statuses") or []
     if allowed_statuses and current_status not in allowed_statuses:
         print(f"[State Validation] Cannot dispatch {role} for {target_file.name}.")
@@ -587,9 +601,14 @@ def cmd_dispatch_agent(args):
 
     isolated = agent_config.get("isolated_worktree", False)
     base_ref = ""
+    provisioned = []
     try:
         if isolated:
             cwd = create_git_worktree(slice_id, project_root)
+            # After the tree exists and before anything runs in it: the ignore
+            # check can only be asked of the worktree, and the agent must never
+            # start against a half-provisioned environment.
+            provisioned = provision.copy_into_worktree(cwd, project_root, config)
             sandbox_branch = f"feat/{slice_id}"
             # Where the branch stands *now*, so the supervisor can later ask
             # what this run added rather than what the branch happens to
@@ -678,6 +697,11 @@ def cmd_dispatch_agent(args):
 
     print(f"Dispatched {agent_config.get('model')} as {role} (supervisor PID {process.pid}).")
     print(f"Log: {log_file}")
+    if provisioned:
+        # Said out loud because at least one of these is normally a credential.
+        # A file crossing into a tree an autonomous agent is about to work in
+        # is not a detail to discover afterwards from a directory listing.
+        print(f"Copied into the worktree: {', '.join(provisioned)}")
     _warn_if_invisible_skills(agent_config, adapter, cwd)
     _warn_if_unpinned_lenses(declared_lenses)
     _warn_if_near_miss_branch(slice_id, project_root)
