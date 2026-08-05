@@ -9,6 +9,8 @@ path would split `mkdir` from its redirect target.
 
 from pathlib import Path
 
+from scripts.errors import OrchestratorError
+
 SUPERPOWERS_DIRNAME = ".superpowers"
 
 #: Paths, relative to the project root, that the orchestrator itself creates.
@@ -54,6 +56,36 @@ def sandbox_state_path(project_root: Path, project_name: str) -> Path:
     already constrained to `[a-z0-9_-]`.
     """
     return sandbox_dir(project_root) / f"{project_name}.json"
+
+
+def document_prompt_path(target_file: Path, project_root: Path) -> str:
+    """The document's path as an agent should be told it, posix-flavoured.
+
+    Relative to the project root, which is the one form that is correct in
+    both trees a dispatch can put an agent in: a worktree is a checkout of
+    the same repository with the same layout, so the same relative path names
+    the worktree's own copy. An absolute path names the project root's copy
+    only, and handing that to an isolated agent tells it to work in the tree
+    it was kept out of.
+
+    Posix separators because git speaks them, the layout is identical on
+    every platform, and a backslash travelling through a prompt string into a
+    CLI argument is one more thing that can be eaten in transit.
+
+    Refuses a document outside the root: there is no correct prompt to render
+    for one, and dispatching an agent at a path it cannot resolve burns a
+    model's quota discovering that.
+    """
+    target_file = Path(target_file).resolve()
+    project_root = Path(project_root).resolve()
+    try:
+        return target_file.relative_to(project_root).as_posix()
+    except ValueError:
+        raise OrchestratorError(
+            f"'{target_file}' is not inside the project root '{project_root}', "
+            f"so there is no path an agent working in that root could open. "
+            f"Dispatch a document that lives in the project."
+        ) from None
 
 
 def is_artifact_path(rel_path: str) -> bool:

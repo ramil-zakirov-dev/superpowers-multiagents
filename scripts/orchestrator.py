@@ -37,7 +37,9 @@ from scripts.git_ops import (
 )
 from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import acquire_slice_lock, release_slice_lock, release_slice_lock_file
-from scripts.paths import ARTIFACT_PREFIXES, lock_path, log_path, logs_dir
+from scripts.paths import (
+    ARTIFACT_PREFIXES, document_prompt_path, lock_path, log_path, logs_dir,
+)
 from scripts import abandonment
 from scripts import milestone as milestone_mod
 from scripts import produced
@@ -490,6 +492,15 @@ def cmd_dispatch_agent(args):
         print(f"   Current status is '{current_status}'; {role} requires one of: {allowed_statuses}")
         sys.exit(1)
 
+    # The path the agent will be told to open. Computed here, with the other
+    # gates, because it can fail and the lock below is a mutation — the same
+    # ordering rule the rest of this function keeps.
+    try:
+        prompt_file = document_prompt_path(target_file, project_root)
+    except OrchestratorError as exc:
+        print(f"[Path Gate] Cannot dispatch {role} for {target_file.name}: {exc}")
+        sys.exit(1)
+
     # 3. Lock
     try:
         lock_file = acquire_slice_lock(slice_id, project_root)
@@ -520,7 +531,7 @@ def cmd_dispatch_agent(args):
     declared_lenses = skills_mod.declared_lenses(frontmatter)
     task_prompt = skills_mod.compose_prompt(
         prompt_template.format(
-            file=target_file,
+            file=prompt_file,
             slice_id=slice_id,
             frontmatter=produced_frontmatter,
         ),
