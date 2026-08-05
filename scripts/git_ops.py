@@ -61,9 +61,18 @@ def create_git_worktree(slice_id: str, project_root: Path) -> Path:
             cwd=project_root, capture_output=True, text=True,
         )
         if reused.returncode != 0:
+            # Both, not whichever spoke last. The fallback's message describes
+            # the *fallback's* problem — typically "invalid reference", because
+            # the branch the first attempt was supposed to create does not
+            # exist — and quoting only that hides why the first attempt failed,
+            # which is the question. Observed: a real failure diagnosable only
+            # after this line was widened.
             raise GitError(
-                f"Could not create worktree for '{slice_id}': "
-                f"{reused.stderr.strip() or created.stderr.strip()}"
+                f"Could not create worktree for '{slice_id}'. "
+                f"Creating branch {branch_name}: "
+                f"{created.stderr.strip() or f'exit {created.returncode}'}. "
+                f"Attaching to an existing {branch_name}: "
+                f"{reused.stderr.strip() or f'exit {reused.returncode}'}."
             )
     return worktree_path
 
