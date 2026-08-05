@@ -36,7 +36,7 @@ from scripts.git_ops import (
     merge_and_cleanup_worktree,
 )
 from scripts.hooks import canonical_events, run_infrastructure_hook
-from scripts.locks import acquire_slice_lock, release_slice_lock_file
+from scripts.locks import acquire_slice_lock, release_slice_lock, release_slice_lock_file
 from scripts.paths import ARTIFACT_PREFIXES, log_path, logs_dir
 from scripts import abandonment
 from scripts import milestone as milestone_mod
@@ -758,6 +758,88 @@ def cmd_summary(args):
     print("\n".join(lines[-50:]))
 
 
+def cmd_reconcile(args):
+    """Move an abandoned dispatch's document out of its in-progress state.
+
+    Legal only when the document sits at some role's in_progress_status AND
+    no live supervisor owns the slice. Moves it to FAILED — the one status
+    that describes the *dispatch* truthfully: nobody recorded an outcome.
+    What FAILED deliberately does not say is anything about the *work*;
+    judging that is the audit the pipeline already requires before
+    close-slice.
+    """
+    filepath = Path(args.file).resolve()
+    if not filepath.is_file():
+        print(f"Error: --file '{filepath}' is not a file.")
+        sys.exit(1)
+
+    project_root = (
+        Path(args.dir).resolve() if getattr(args, "dir", "")
+        else find_project_root(filepath)
+    )
+
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
+    if milestone_mod.document_kind(frontmatter) == milestone_mod.MILESTONE_KIND:
+        print(
+            f"Error: {filepath.name} is a milestone brief; no supervisor ever "
+            f"owns one, so there is nothing to reconcile."
+        )
+        sys.exit(1)
+
+    slice_id = frontmatter.get("slice_id", filepath.stem)
+    current_status = frontmatter.get("status", "UNKNOWN")
+    in_progress = abandonment.in_progress_statuses(config)
+
+    if current_status not in in_progress:
+        print(
+            f"Error: {filepath.name} is at '{current_status}', which no role "
+            f"treats as in-progress ({sorted(in_progress)}). Nothing to reconcile."
+        )
+        sys.exit(1)
+
+    if not abandonment.is_abandoned(current_status, slice_id, project_root, in_progress):
+        print(
+            f"Error: a live supervisor owns slice '{slice_id}'. Reconciling a "
+            f"running dispatch would race its epilogue — let it finish."
+        )
+        sys.exit(1)
+
+    evidence = abandonment.lock_evidence(slice_id, project_root)
+    print(f"Slice '{slice_id}' is abandoned:")
+    print(f"   status: {current_status}")
+    print(f"   {evidence}")
+
+    if not getattr(args, "yes", False):
+        print(
+            f"Refusing to mark {filepath.name} FAILED without --yes. Audit the "
+            f"work itself first — FAILED records that the dispatch went "
+            f"unrecorded, not that the work is bad — then re-run with --yes."
+        )
+        sys.exit(2)
+
+    valid_statuses, transitions = milestone_mod.machine_for(
+        milestone_mod.SLICE_KIND, config
+    )
+    if not update_frontmatter_status(filepath, "FAILED", valid_statuses, transitions):
+        print(
+            f"Error: could not move '{slice_id}' from '{current_status}' to "
+            f"FAILED. The stale lock was kept; if this role's machine declares "
+            f"no transition to FAILED, add one in .superpowers/agents.yaml."
+        )
+        sys.exit(1)
+
+    release_slice_lock(slice_id, project_root)
+    print(f"Released the stale lock for '{slice_id}'.")
+    print("Re-enter the pipeline from FAILED via SPEC_APPROVED or PLAN_APPROVED.")
+
+
 def cmd_milestone(args):
     """Milestone brief lifecycle: create, sync track state, check completeness.
 
@@ -858,6 +940,19 @@ def main():
     p_sum.add_argument("--slice", required=True, help="Slice ID or keyword")
     p_sum.add_argument("--dir", default="", help="Project root directory (default: cwd)")
 
+    # reconcile
+    p_reconcile = subparsers.add_parser(
+        "reconcile",
+        help="Move an abandoned dispatch's document to FAILED and release its stale lock",
+    )
+    p_reconcile.add_argument("--file", required=True, help="Path to the slice document")
+    p_reconcile.add_argument(
+        "--dir", default="", help="Project root (default: derived from --file)"
+    )
+    p_reconcile.add_argument(
+        "--yes", action="store_true", help="Apply the move to FAILED"
+    )
+
     # sandbox
     p_sandbox = subparsers.add_parser("sandbox", help="Per-slice infrastructure sandbox")
     p_sandbox.add_argument(
@@ -911,6 +1006,8 @@ def main():
         cmd_dispatch_agent(args)
     elif args.command == "summary":
         cmd_summary(args)
+    elif args.command == "reconcile":
+        cmd_reconcile(args)
     elif args.command == "sandbox":
         cmd_sandbox(args)
     elif args.command == "milestone":
