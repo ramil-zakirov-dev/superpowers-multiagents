@@ -43,6 +43,7 @@ from scripts.paths import (
     lock_path, log_path, logs_dir, resolve_docs_base,
 )
 from scripts import abandonment
+from scripts import closure
 from scripts import milestone as milestone_mod
 from scripts import produced
 from scripts import provision
@@ -318,6 +319,22 @@ def _set_milestone_status(filepath, new_status, valid_statuses, transitions):
         sys.exit(1)
 
 
+def _sync_briefs_listing(slice_id: str, filepath: Path) -> None:
+    """Refresh every milestone brief whose tracks list this slice.
+
+    Closing a slice and refreshing the milestones that list it are one command,
+    so a checkbox cannot go stale. A sync failure is a warning: the slice's
+    outcome is already recorded, and a later step must not overturn it -- the
+    same rule the completion hook and the sandbox teardown follow.
+    """
+    for brief in milestone_mod.briefs_listing(slice_id, filepath):
+        try:
+            milestone_mod.sync_file(brief)
+            print(f"Refreshed {brief.name}.")
+        except (OrchestratorError, OSError) as exc:
+            print(f"Warning: could not refresh {brief.name}: {exc}")
+
+
 def cmd_set_status(args):
     """Set a slice's status. VERIFIED_CLOSED merges first, then marks.
 
@@ -377,6 +394,23 @@ def cmd_set_status(args):
     # status silently stayed put -- exactly the "mutation before the fallible
     # check" ordering this slice exists to eliminate everywhere else.
     if "VERIFIED_CLOSED" not in (transitions.get(current_status) or []):
+        # Before refusing: this may be the slice's *spec*, which has no legal
+        # path to a terminal status at all — its own ends at PLAN_GENERATED.
+        # Recording the slice's closure on it is not the transition that was
+        # just refused, and `closure.verdict` says whether there are grounds.
+        allowed, reason = closure.verdict(
+            filepath, slice_id, current_status,
+            in_progress=abandonment.in_progress_statuses(config),
+            skip_merge=getattr(args, "skip_merge", False),
+        )
+        if allowed:
+            if not closure.record_closure(filepath, valid_statuses):
+                sys.exit(1)
+            _sync_briefs_listing(slice_id, filepath)
+            return
+        if reason:
+            print(f"Error: {reason}")
+            sys.exit(1)
         print(f"Error: Invalid state transition from '{current_status}' to 'VERIFIED_CLOSED'.")
         sys.exit(1)
 
@@ -406,16 +440,20 @@ def cmd_set_status(args):
     if not update_frontmatter_status(filepath, "VERIFIED_CLOSED", valid_statuses, transitions):
         sys.exit(1)
 
-    # Closing a slice and refreshing the milestones that list it are one
-    # command, so a checkbox cannot go stale. A sync failure is a warning: the
-    # slice's outcome is already recorded, and a later step must not overturn
-    # it -- the same rule the hook and the sandbox teardown below follow.
-    for brief in milestone_mod.briefs_listing(slice_id, filepath):
+    # The slice's other document says what it said when its own dispatch ended,
+    # and nothing has ever updated it. For the same reason the briefs below are
+    # refreshed here: closing a slice and recording that closure everywhere it
+    # is written down are one command, or one of the copies goes stale. A
+    # failure is a warning -- the slice's outcome is already recorded.
+    spec = closure.sibling(filepath, closure.SPECS, slice_id)
+    if spec is not None:
         try:
-            milestone_mod.sync_file(brief)
-            print(f"Refreshed {brief.name}.")
-        except (OrchestratorError, OSError) as exc:
-            print(f"Warning: could not refresh {brief.name}: {exc}")
+            if closure.record_closure(spec, valid_statuses):
+                print(f"Closed {spec.name} with it.")
+        except OSError as exc:
+            print(f"Warning: could not close {spec.name}: {exc}")
+
+    _sync_briefs_listing(slice_id, filepath)
 
     try:
         run_infrastructure_hook(
