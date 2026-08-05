@@ -12,6 +12,7 @@ crashed or simply forgot left the slice stranded with no way back.
 """
 
 import argparse
+import datetime
 import os
 import subprocess
 import sys
@@ -29,6 +30,11 @@ from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import claim_slice_lock, release_slice_lock_file
 
 FAILED_STATUS = "FAILED"
+
+#: Opens each run's section of the log. The log path is derived from the role
+#: and the document, so every re-dispatch of a slice lands on the same file and
+#: the runs need a visible seam between them.
+RUN_BANNER = "=== run started {stamp} ==="
 
 
 def run_supervised(
@@ -59,22 +65,52 @@ def run_supervised(
         release_slice_lock_file(lock_file)
 
 
+def _existing_log_size(log_file: Path) -> int:
+    """Bytes already in the log, or 0 when that cannot be established.
+
+    Only decides whether to write a blank line before the banner, so an
+    unanswerable stat costs cosmetics and nothing else — worth swallowing
+    rather than turning a formatting question into a failed dispatch.
+    """
+    try:
+        return log_file.stat().st_size
+    except OSError:
+        return 0
+
+
 def _run_child(argv: list, cwd: Path, log_file: Path) -> int:
     """Spawn the agent with both streams captured.
+
+    Appends. The log path is `<role>_<document>.log`, so a re-dispatch of the
+    same slice reopens the same file — and truncating meant the retry erased
+    the transcript of the run it was retrying. That is backwards: the failed
+    run is the one worth reading, and a retry is what you do after a failure.
+    It cost a real diagnosis (issue #15 had to be retracted for want of a log
+    the tool had already overwritten).
+
+    The cost accepted in exchange is an unbounded file. No rotation, on
+    purpose: this is a handful of runs per slice under an ignored directory,
+    and a size policy is a knob that can be set wrong in the direction we just
+    spent a slice fixing.
 
     A failure to even create/open the log file is treated as an outcome
     (synthesized non-zero exit), not an exception — letting it propagate
     would skip _record_outcome entirely and strand the slice at its
     in-progress status with no way back.
     """
+    already_has_runs = _existing_log_size(log_file) > 0
     try:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(log_file, "w", encoding="utf-8", errors="replace")
+        handle = open(log_file, "a", encoding="utf-8", errors="replace")
     except OSError as exc:
         _safe_print(f"[runner] could not create/open log file {log_file}: {exc}")
         return 127
 
     with handle as log:
+        if already_has_runs:
+            log.write("\n\n")
+        stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+        log.write(RUN_BANNER.format(stamp=stamp) + "\n")
         log.write(f"$ {' '.join(str(part) for part in argv)}\n\n")
         log.flush()
         try:
