@@ -228,3 +228,50 @@ def test_dollar_brace_env_placeholder_is_not_treated_as_a_template_token():
         enabled=True, env={"dsn": "postgres://u:${SANDBOX_TEST_PASSWORD}@{ip}/db"}
     )
     validate_config(config)  # must not raise ConfigError
+
+
+# --- worktree.copy: the shape only; paths are a dispatch-time question -------
+
+
+def _with_worktree(**overrides):
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["worktree"] = {**config.get("worktree", {}), **overrides}
+    return config
+
+
+def test_worktree_copies_nothing_by_default():
+    """A project that declares nothing must get the tree git builds, untouched."""
+    assert DEFAULT_CONFIG["worktree"]["copy"] == []
+    validate_config(copy.deepcopy(DEFAULT_CONFIG))
+
+
+def test_unknown_worktree_key_fails_closed():
+    with pytest.raises(ConfigError, match="copyy"):
+        validate_config(_with_worktree(copyy=[".env"]))
+
+
+def test_a_bare_string_instead_of_a_list_is_refused():
+    """`copy: .env` is the slip a YAML author actually makes, and it would
+    otherwise iterate as five single-character paths."""
+    with pytest.raises(ConfigError, match="list"):
+        validate_config(_with_worktree(copy=".env"))
+
+
+def test_an_empty_entry_is_refused():
+    """An empty string resolves to the project root itself."""
+    with pytest.raises(ConfigError, match="non-empty"):
+        validate_config(_with_worktree(copy=[".env", "  "]))
+
+
+def test_a_non_string_entry_is_refused():
+    with pytest.raises(ConfigError, match="non-empty"):
+        validate_config(_with_worktree(copy=[None]))
+
+
+def test_a_declared_list_survives_a_partial_override():
+    """deep_merge replaces lists wholesale, so a project's list is exactly its
+    own — which is the intended reading of "these are the files I need"."""
+    merged = deep_merge(DEFAULT_CONFIG, {"worktree": {"copy": [".env"]}})
+    validate_config(merged)
+    assert merged["worktree"]["copy"] == [".env"]
+    assert merged["sandbox"]["enabled"] is False       # nothing else disturbed

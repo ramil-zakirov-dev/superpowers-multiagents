@@ -32,3 +32,7 @@ class ValidationError(OrchestratorError):
 
 class SandboxError(OrchestratorError):
     """The infrastructure sandbox could not be brought to the requested state."""
+
+
+class ProvisionError(OrchestratorError):
+    """A worktree could not be given a file it was declared to need."""

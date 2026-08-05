@@ -83,6 +83,13 @@ DEFAULT_CONFIG = {
             "extra_args": []
         }
     },
+    "worktree": {
+        #: Untracked files copied into an isolated role's worktree, by path
+        #: relative to the project root. Empty by default: a project that
+        #: declares nothing gets exactly the tree git builds, and no extra
+        #: git call is ever made.
+        "copy": [],
+    },
     "sandbox": {
         "enabled": False,
         "compose_file": "docker-compose.yml",
@@ -165,6 +172,9 @@ KNOWN_AGENT_KEYS = frozenset({
     "produces",
     "produced_title",
 })
+
+
+KNOWN_WORKTREE_KEYS = frozenset({"copy"})
 
 
 KNOWN_SANDBOX_KEYS = frozenset({
@@ -278,6 +288,33 @@ def validate_config(config: dict) -> None:
                 f"named items, so write them as one YAML block scalar "
                 f"(`instructions: |`)."
             )
+
+    worktree = config.get("worktree") or {}
+    unknown_keys = set(worktree) - KNOWN_WORKTREE_KEYS
+    if unknown_keys:
+        raise ConfigError(
+            f"worktree: unknown key(s) {sorted(unknown_keys)}. "
+            f"Known keys: {sorted(KNOWN_WORKTREE_KEYS)}"
+        )
+
+    entries = worktree.get("copy")
+    if entries is not None:
+        # Shape only. Whether a path exists, escapes the project or is already
+        # tracked needs a project root, which this function does not have and
+        # should not acquire: those are dispatch-time questions and they are
+        # asked at the dispatch gate, where the answer can name the worktree.
+        if not isinstance(entries, list):
+            raise ConfigError(
+                f"worktree.copy must be a list of paths relative to the "
+                f"project root, got {type(entries).__name__}. A bare string is "
+                f"the common slip: write `copy: [.env]`, not `copy: .env`."
+            )
+        for entry in entries:
+            if not isinstance(entry, str) or not entry.strip():
+                raise ConfigError(
+                    f"worktree.copy contains {entry!r}: every entry must be a "
+                    f"non-empty path relative to the project root."
+                )
 
     sandbox = config.get("sandbox") or {}
     unknown_keys = set(sandbox) - KNOWN_SANDBOX_KEYS
