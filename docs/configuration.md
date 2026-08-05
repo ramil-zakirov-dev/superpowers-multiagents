@@ -354,6 +354,56 @@ Adding a role also extends the hook event set below: a `reviewer` role makes
 `on_slice_reviewer_start`, `on_reviewer_complete` and `on_reviewer_failed` valid
 keys in `hooks.yaml`.
 
+## Waiting on a dispatch, and recovering an abandoned one
+
+`dispatch` returns immediately by design: the supervisor it spawns is
+deliberately detached, and a blocking dispatch would hold your turn for the
+whole run while leaving the agent running with nobody to record its outcome.
+To be notified when a dispatch actually ends, background the blocking form
+instead:
+
+```bash
+python scripts/orchestrator.py dispatch-agent --role executor --file <plan> --wait
+```
+
+`wait` (also standalone: `wait --slice <slice_id> [--timeout S] [--poll S]`)
+blocks while the slice is in progress and a live supervisor owns it, then
+exits `0` when the status moves, `2` when the supervisor died with the status
+unchanged, `1` when `--timeout` elapses with neither (the default is no
+timeout — the caller backgrounding the wait has its own), and `3` when it
+could not start waiting at all: an unknown `--slice`, or a config it cannot
+read. `1` and `3` are kept apart on purpose — `1` means "not finished yet",
+`3` means "this will never finish", and a caller that cannot tell them apart
+waits forever on a typo. Its last line names the terminal status, the elapsed
+time and the log path, so no second command is needed.
+
+Do **not** hand-roll this loop. On Windows, `kill -0 <pid>` in Git Bash
+reports a live native pid as "No such process" (measured on Windows 11, pid
+1336 alive per `Get-Process`), so a hand-rolled waiter reports completion on
+its first iteration, every time — failing open exactly when it matters.
+
+If a supervisor dies before recording an outcome, the document keeps claiming
+work is in progress, and every reader believes it. `status` says so instead
+of repeating the stored value as fact (the stored status stays visible —
+hiding it would be its own lie):
+
+```
+  [EXECUTING          ] 2026-08-04-foo-plan.md - ...
+                        ⚠ abandoned: lock names supervisor pid 41676, which is not alive; run `reconcile`
+```
+
+`reconcile --file <document> --yes` is the way out. Legal only when the
+document sits at a role's `in_progress_status` and no live supervisor owns
+the slice, it moves the document to `FAILED` — the truthful statement about
+the *dispatch*, which went unrecorded — releases the stale lock, and prints
+what it based the verdict on: the lock's pid, its liveness, the status it
+moved from. `FAILED` says nothing about the *work*; judging that is the audit
+the pipeline already requires before `close-slice`. From `FAILED` the machine
+allows `SPEC_APPROVED` and `PLAN_APPROVED`, so you re-enter at the gate you
+choose. Without `--yes`, reconcile prints the same evidence and changes
+nothing. It refuses outright when a live supervisor owns the slice —
+reconciling a running dispatch would race the runner's own epilogue.
+
 ## Infrastructure Hooks (`.superpowers/hooks.yaml`)
 
 Optional. Lets a project prepare and tear down its own environment around a
