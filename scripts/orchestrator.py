@@ -560,9 +560,11 @@ def cmd_dispatch_agent(args):
     produced_frontmatter = ""
     if agent_config.get("produces"):
         produced_frontmatter = produced.frontmatter_block(
-            slice_id,
-            frontmatter.get("milestone_id") or "",
-            agent_config.get("success_status") or "",
+            frontmatter,
+            slice_id=slice_id,
+            status=agent_config.get("success_status") or "",
+            source_path=prompt_file,
+            title_template=agent_config.get("produced_title") or "",
         )
     # The document's own citations travel with the role's skills: the agent is
     # about to be dispatched *at* this file, and what it was written against is

@@ -52,6 +52,12 @@ DEFAULT_CONFIG = {
             "success_status": "PLAN_GENERATED",
             "isolated_worktree": False,
             "produces": "plans",
+            #: How the produced document names itself. A template rather than
+            #: a hardcoded noun because `produces` is configurable: a role
+            #: that produces something other than a plan must not be handed
+            #: prose about plans. Without one, the source's own title carries
+            #: through — mediocre, never wrong.
+            "produced_title": "{title} implementation plan",
             "prompt_template": (
                 "Read the spec at {file} and create a detailed TDD implementation plan "
                 "using the writing-plans skill. Save it in docs/superpowers/plans/.\n\n"
@@ -157,6 +163,7 @@ KNOWN_AGENT_KEYS = frozenset({
     "skills",
     "instructions",
     "produces",
+    "produced_title",
 })
 
 
@@ -242,6 +249,25 @@ def validate_config(config: dict) -> None:
                 f"role's document lands in (for example `plans`), got "
                 f"{type(produces).__name__}."
             )
+
+        produced_title = agent.get("produced_title")
+        if produced_title is not None:
+            if not isinstance(produced_title, str):
+                raise ConfigError(
+                    f"agent '{role}'.produced_title must be a template string "
+                    f"such as '{{title}} implementation plan', got "
+                    f"{type(produced_title).__name__}."
+                )
+            # Caught here rather than at dispatch: a bad token would raise
+            # KeyError deep inside prompt assembly, after the slice had already
+            # been moved to its in-progress status.
+            for token in _TOKEN_PATTERN.findall(produced_title):
+                if token != "title":
+                    raise ConfigError(
+                        f"agent '{role}'.produced_title: unknown template token "
+                        f"'{{{token}}}'. The only token is {{title}}, the source "
+                        f"document's own title."
+                    )
 
         instructions = agent.get("instructions")
         if instructions is not None and not isinstance(instructions, str):

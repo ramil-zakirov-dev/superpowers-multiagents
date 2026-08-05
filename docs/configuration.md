@@ -108,6 +108,7 @@ sandbox:
 | `skills` | list | Optional list of skill names appended to the role's prompt |
 | `instructions` | string | Optional project rules appended last, above the harness's own (see [Instructions](#instructions-per-role-project-rules)) |
 | `produces` | string | Optional sibling directory the role's document lands in, e.g. `plans` (see [Produced documents](#produced-documents)) |
+| `produced_title` | string | Optional template for the produced document's `title`, with one token, `{title}` — the source's own. Default for the planner: `"{title} implementation plan"`. Without one the source's title carries through unchanged |
 
 ## Prompt templates and their skill dependency
 
@@ -177,10 +178,32 @@ agents:
 ```
 
 **Before the run**, `{frontmatter}` in the role's `prompt_template` renders the
-exact block the document must open with, built from the source document — the
-same `slice_id`, its `milestone_id` if it has one, and the role's
-`success_status`. The default planner template uses it, so the requirement
-arrives as literal text rather than as something to infer.
+exact block the document must open with, built from the source document. The
+default planner template uses it, so the requirement arrives as literal text
+rather than as something to infer.
+
+| Key | Where it comes from |
+|-----|---------------------|
+| `slice_id` | the source document — the two documents are one slice |
+| `milestone_id` | the source document, omitted when it has none |
+| `title` | the source's own `title` through the role's `produced_title` template |
+| `status` | the role's `success_status` |
+| `target_version` | the source document, omitted when it has none |
+| `spec` | the source's path, rendered by the dispatcher rather than asked of the agent |
+| `depends_on` | the source document, always written even when empty |
+
+The prompt says to reproduce the block *exactly*, so whatever is absent from it
+is absent from every generated document — this is an instruction, not a default
+a diligent agent improves on. `depends_on` is the one that is not cosmetic: the
+dependency gate reads the **dispatched** document, and the executor is
+dispatched at the plan, so a plan that dropped the spec's dependencies would
+silently stop being held back by them.
+
+`lenses:` is deliberately **not** carried forward. It records which ways of
+thinking a document was reasoned through; copying the spec's list onto the plan
+would have the plan assert a use nothing observed. The dispatcher already puts
+those citations in the prompt — supplying the input and claiming the outcome
+are different statements.
 
 **After the run**, exiting 0 is no longer enough. The supervisor looks for a
 document in that directory carrying this slice's `slice_id` and a `status:`; if
@@ -202,7 +225,7 @@ declaring anything else is refused at both gates.
 
 | Token | Value |
 |-------|-------|
-| `{file}` | Absolute path of the document being dispatched against |
+| `{file}` | Path of the document being dispatched against, **relative to the project root** — the one form that names the same file in the main tree and in an isolated role's worktree |
 | `{slice_id}` | The slice's id, from frontmatter or the filename |
 | `{frontmatter}` | The block a produced document must open with; empty when the role declares no `produces` |
 
