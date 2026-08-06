@@ -754,6 +754,8 @@ def cmd_dispatch_agent(args):
         result = abandonment.wait_for_dispatch(
             target_file, project_root, config, slice_id,
             poll=getattr(args, "poll", None) or abandonment.DEFAULT_POLL_SECONDS,
+            until=(abandonment.success_statuses(config)
+                   if getattr(args, "until_success", False) else None),
         )
         sys.exit(_report_wait_result(slice_id, target_file, project_root, result))
 
@@ -1062,6 +1064,8 @@ def cmd_wait(args):
     result = abandonment.wait_for_dispatch(
         document, project_root, config, slice_id,
         timeout=args.timeout, poll=args.poll,
+        until=(abandonment.success_statuses(config)
+               if getattr(args, "until_success", False) else None),
     )
     sys.exit(_report_wait_result(slice_id, document, project_root, result))
 
@@ -1174,6 +1178,11 @@ def main():
              "(0 finished, 2 abandoned, 1 timeout)",
     )
     p_agent.add_argument(
+        "--until-success", action="store_true",
+        help="With --wait: return only on a role's success_status, waiting "
+             "through FAILED and abandonment",
+    )
+    p_agent.add_argument(
         "--poll", type=float, default=None,
         help="With --wait: seconds between checks (default: 15)",
     )
@@ -1188,6 +1197,11 @@ def main():
              "(0 finished, 2 abandoned, 1 timeout)",
     )
     p_plan.add_argument(
+        "--until-success", action="store_true",
+        help="With --wait: return only on a role's success_status, waiting "
+             "through FAILED and abandonment",
+    )
+    p_plan.add_argument(
         "--poll", type=float, default=None,
         help="With --wait: seconds between checks (default: 15)",
     )
@@ -1200,6 +1214,11 @@ def main():
         "--wait", action="store_true",
         help="Block until the dispatch ends, then exit with its outcome "
              "(0 finished, 2 abandoned, 1 timeout)",
+    )
+    p_exec.add_argument(
+        "--until-success", action="store_true",
+        help="With --wait: return only on a role's success_status, waiting "
+             "through FAILED and abandonment",
     )
     p_exec.add_argument(
         "--poll", type=float, default=None,
@@ -1252,6 +1271,13 @@ def main():
     p_wait.add_argument(
         "--poll", type=float, default=abandonment.DEFAULT_POLL_SECONDS,
         help="Seconds between checks (default: 15)",
+    )
+    # For the caller that repairs failures by hand: a wakeup on FAILED is one
+    # it will do nothing with. `--timeout` stays the escape.
+    p_wait.add_argument(
+        "--until-success", action="store_true",
+        help="Return only when a role's success_status is reached; keep "
+             "waiting through FAILED and abandonment",
     )
 
     # sandbox

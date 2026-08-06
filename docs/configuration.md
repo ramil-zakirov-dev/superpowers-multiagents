@@ -504,6 +504,36 @@ reports a live native pid as "No such process" (measured on Windows 11, pid
 1336 alive per `Get-Process`), so a hand-rolled waiter reports completion on
 its first iteration, every time — failing open exactly when it matters.
 
+### Waking only on success (`--until-success`)
+
+By default the wait ends on *any* settled status, `FAILED` included. That is
+right for a caller that acts on a failure — reads the log, repairs the cause,
+re-dispatches. It is wrong for one that does not: an operator who repairs
+failures by hand gets a wakeup they will do nothing with, and three of them in
+an afternoon trains everyone to ignore the fourth.
+
+`--until-success` (on `wait` and on any dispatch's `--wait`) returns only when
+the document reaches a status some configured role calls `success_status` —
+`PLAN_GENERATED` for the planner, `EXECUTION_COMPLETE` for the executor, read
+from the config rather than hard-coded, so a project that renames them keeps
+working. Everything else keeps waiting, including abandonment: like a failure,
+it needs a human, and the caller has said it only wants to hear about work
+that finished.
+
+```bash
+python scripts/orchestrator.py wait --file <plan> --until-success --timeout 21600
+```
+
+Pass `--timeout` with it. Without one the wait is unbounded by design, and a
+repair that never comes is then indistinguishable from a run still going.
+
+What this does **not** change: who writes the status. It is still the
+supervisor, from the agent's exit code plus the postcondition that commits
+exist on the slice branch. An agent that records its own success is not
+evidence of anything — that is [#21](https://github.com/ramil-zakirov-dev/superpowers-multiagents/issues/21),
+a defect, not a mechanism. `--until-success` narrows which of the supervisor's
+verdicts wake you; it does not move the verdict.
+
 If a supervisor dies before recording an outcome, the document keeps claiming
 work is in progress, and every reader believes it. `status` says so instead
 of repeating the stored value as fact (the stored status stays visible —

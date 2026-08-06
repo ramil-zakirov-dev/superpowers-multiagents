@@ -42,6 +42,20 @@ def in_progress_statuses(config: dict) -> set[str]:
     } - {None}
 
 
+def success_statuses(config: dict) -> set[str]:
+    """Every status that claims some configured role finished its work.
+
+    Read from the config for the same reason `in_progress_statuses` is: the
+    names are the project's, not ours. Unlike `isolated_success_statuses`
+    this covers every role — a caller waiting for work to be done does not
+    care whether the role that does it runs in a worktree.
+    """
+    return {
+        agent.get("success_status")
+        for agent in (config.get("agents") or {}).values()
+    } - {None}
+
+
 def isolated_success_statuses(config: dict) -> set[str]:
     """Every status that claims an isolated role finished successfully.
 
@@ -252,6 +266,7 @@ def wait_for_dispatch(
     *,
     timeout: float | None = None,
     poll: float = DEFAULT_POLL_SECONDS,
+    until: set[str] | None = None,
     sleep=time.sleep,
     monotonic=time.monotonic,
     is_alive=_is_process_alive,
@@ -263,6 +278,13 @@ def wait_for_dispatch(
     backgrounds this process has its own, and a timeout belongs at the
     boundary that can act on it. Liveness and the clock are injectable so
     the tests are fast and not flaky.
+
+    `until` narrows what ends the wait to a set of statuses — everything else
+    keeps waiting, including `FAILED` and an abandoned dispatch. That is for
+    the caller that only acts on success and repairs failures by hand: for it,
+    returning on a failure is a wakeup it will do nothing with. It does not
+    change what a terminal status means anywhere else, and `timeout` remains
+    the escape, so waiting for a repair that never comes is still bounded.
     """
     in_progress = in_progress_statuses(config)
     started = monotonic()
@@ -294,21 +316,21 @@ def wait_for_dispatch(
                     ).get("status", "UNKNOWN")
                     return WaitResult(OUTCOME_UNREADABLE_LOCK, status, elapsed)
                 lock_held = True
-        if not lock_held:
-            status = parse_frontmatter(
-                Path(document).read_text(encoding="utf-8")
-            ).get("status", "UNKNOWN")
-            if status not in in_progress:
-                return WaitResult(OUTCOME_TERMINAL, status, elapsed)
+        # Read after the lock, never before -- see the ordering note above.
+        status = parse_frontmatter(
+            Path(document).read_text(encoding="utf-8")
+        ).get("status", "UNKNOWN")
+        settled = status not in in_progress
+        if settled and (until is None or status in until):
+            return WaitResult(OUTCOME_TERMINAL, status, elapsed)
+        if not lock_held and not settled and until is None:
+            # No live supervisor and the status never moved. Under `until`
+            # this is not reported either: like a failure, it needs a human,
+            # and the caller asked to hear only about work that finished.
             return WaitResult(
                 OUTCOME_ABANDONED, status, elapsed,
                 evidence=describe_lock(lock_file, data, lock_held),
             )
-        status = parse_frontmatter(
-            Path(document).read_text(encoding="utf-8")
-        ).get("status", "UNKNOWN")
-        if status not in in_progress:
-            return WaitResult(OUTCOME_TERMINAL, status, elapsed)
         if timeout is not None and elapsed >= timeout:
             return WaitResult(OUTCOME_TIMED_OUT, status, elapsed)
         sleep(poll)

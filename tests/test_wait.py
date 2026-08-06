@@ -266,3 +266,119 @@ def test_cmd_wait_accepts_an_explicit_file_and_skips_resolution(
 
     assert excinfo.value.code == 0
     assert "PLAN_GENERATED" in capsys.readouterr().out
+
+
+# --- Waking only on success ----------------------------------------------
+# The owner's rule for a dispatched slice: a failed run is repaired by hand,
+# so returning on FAILED wakes the caller for something it will not act on.
+# `until` narrows what counts as the end of the wait without changing what a
+# terminal status means anywhere else.
+
+
+class FlippingClock(FakeClock):
+    """A clock whose sleep also advances the world — the document's status
+    changes under the loop the way a human's repair and re-dispatch would."""
+
+    def __init__(self, doc, after, status):
+        super().__init__()
+        self.doc, self.after, self.status, self.sleeps = doc, after, status, 0
+
+    def sleep(self, seconds):
+        super().sleep(seconds)
+        self.sleeps += 1
+        if self.sleeps == self.after:
+            text = self.doc.read_text(encoding="utf-8")
+            self.doc.write_text(
+                text.replace("status: FAILED", f"status: {self.status}"),
+                encoding="utf-8")
+
+
+def test_success_statuses_are_read_from_the_configured_roles():
+    assert abandonment.success_statuses(DEFAULT_CONFIG) == {
+        "PLAN_GENERATED", "EXECUTION_COMPLETE"}
+
+
+def test_until_does_not_end_the_wait_on_a_failed_run(document):
+    root, doc = document
+    _set_status(doc, "FAILED")
+    clock = FlippingClock(doc, after=3, status="EXECUTION_COMPLETE")
+
+    result = abandonment.wait_for_dispatch(
+        doc, root, DEFAULT_CONFIG, "slice-01",
+        until={"EXECUTION_COMPLETE"},
+        sleep=clock.sleep, monotonic=clock.monotonic,
+        is_alive=lambda pid: False,
+    )
+
+    assert result.outcome == abandonment.OUTCOME_TERMINAL
+    assert result.status == "EXECUTION_COMPLETE"
+    assert clock.sleeps == 3      # it really waited through the failure
+
+
+def test_without_until_a_failed_run_still_ends_the_wait(document):
+    """The default is unchanged: every existing caller keeps its semantics."""
+    root, doc = document
+    _set_status(doc, "FAILED")
+
+    result = abandonment.wait_for_dispatch(
+        doc, root, DEFAULT_CONFIG, "slice-01", is_alive=lambda pid: False)
+
+    assert result.outcome == abandonment.OUTCOME_TERMINAL
+    assert result.status == "FAILED"
+
+
+def test_until_still_honours_the_timeout(document):
+    """Waiting for a repair that never comes must not be unbounded — the
+    caller's patience is the escape, and it has to survive this mode."""
+    root, doc = document
+    _set_status(doc, "FAILED")
+    clock = FakeClock()
+
+    result = abandonment.wait_for_dispatch(
+        doc, root, DEFAULT_CONFIG, "slice-01",
+        until={"EXECUTION_COMPLETE"}, timeout=30, poll=15,
+        sleep=clock.sleep, monotonic=clock.monotonic,
+        is_alive=lambda pid: False,
+    )
+
+    assert result.outcome == abandonment.OUTCOME_TIMED_OUT
+    assert result.status == "FAILED"
+
+
+def test_until_does_not_end_the_wait_on_an_abandoned_dispatch(document):
+    """Abandonment is the same class as FAILED: it needs a human, so it is
+    not a reason to wake a caller that only acts on success."""
+    root, doc = document
+    _running_lock(root, pid=999999999)         # gone on any real process table
+    clock = FakeClock()
+
+    result = abandonment.wait_for_dispatch(
+        doc, root, DEFAULT_CONFIG, "slice-01",
+        until={"PLAN_GENERATED"}, timeout=30, poll=15,
+        sleep=clock.sleep, monotonic=clock.monotonic,
+    )
+
+    assert result.outcome == abandonment.OUTCOME_TIMED_OUT
+
+
+def test_cmd_wait_until_success_keeps_waiting_on_a_failed_slice(document, capsys):
+    root, doc = document
+    _set_status(doc, "FAILED")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers",
+                       until_success=True, timeout=0, poll=0))
+
+    assert excinfo.value.code == 1                  # timed out, not "finished"
+    assert "FAILED" in capsys.readouterr().out
+
+
+def test_cmd_wait_without_the_flag_reports_a_failed_slice_as_before(document, capsys):
+    root, doc = document
+    _set_status(doc, "FAILED")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers"))
+
+    assert excinfo.value.code == 0
+    assert "FAILED" in capsys.readouterr().out
