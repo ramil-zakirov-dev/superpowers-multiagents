@@ -46,16 +46,26 @@ The orchestrator dispatches agents to background CLI processes. The **adapter** 
 
 | Adapter | Harness Key | CLI Command Pattern |
 |---------|-------------|---------------------|
-| `OpenCodeAdapter` | `opencode` | `opencode run --model <provider>/<model> <prompt>` |
+| `OpenCodeAdapter` | `opencode` | `opencode run --model <provider>/<model> --dir <cwd> <prompt>` |
 
 The `build_command()` method returns `list[str]`, which is passed to the supervisor with `shell=False` for safe argument handling.
+
+Its signature is `build_command(agent_config, task_prompt, cwd=None)`. `cwd` is
+the directory the agent must work in — the slice's worktree for an isolated
+role, the project root otherwise. It was added after custom adapters existed in
+the wild, so the orchestrator calls through
+`loader.invoke_build_command`, which inspects the signature and passes `cwd`
+only to an adapter that accepts it. An adapter written against the two-argument
+form keeps working untouched; a project's adapter file is its own code, on its
+own release schedule.
 
 ### Custom Adapters
 
 Users can create their own adapter by:
 
 1. Creating a Python file (e.g. `.superpowers/scripts/my_adapter.py`)
-2. Subclassing `HarnessAdapter` and implementing `build_command()`
+2. Subclassing `HarnessAdapter` and implementing `build_command()` — take
+   `cwd=None` if the harness can be told where to run
 3. Referencing it in `agents.yaml`:
 
 ```yaml

@@ -18,7 +18,7 @@ from pathlib import Path
 if __package__ in (None, ""):  # invoked as a script rather than `-m`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.adapters import get_harness_adapter
+from scripts.adapters import get_harness_adapter, invoke_build_command
 from scripts.config import (
     DEFAULT_CONFIG,
     load_agent_config,
@@ -663,15 +663,10 @@ def cmd_dispatch_agent(args):
     # about to be dispatched *at* this file, and what it was written against is
     # as much a part of the briefing as what the role is good at.
     declared_lenses = skills_mod.declared_lenses(frontmatter)
-    task_prompt = skills_mod.compose_prompt(
-        prompt_template.format(
-            file=prompt_file,
-            slice_id=slice_id,
-            frontmatter=produced_frontmatter,
-        ),
-        skills_mod.declared_skills(agent_config),
-        declared_lenses,
-        skills_mod.declared_instructions(agent_config),
+    rendered_prompt = prompt_template.format(
+        file=prompt_file,
+        slice_id=slice_id,
+        frontmatter=produced_frontmatter,
     )
 
     isolated = agent_config.get("isolated_worktree", False)
@@ -712,7 +707,19 @@ def cmd_dispatch_agent(args):
             current_env=env, known_events=known_events,
         )
         adapter = get_harness_adapter(agent_config, project_root)
-        agent_argv = adapter.build_command(agent_config, task_prompt)
+        # Composed here rather than above because the location paragraph needs
+        # the tree, and the tree is created inside this block. Pure, so its
+        # position among the fallible steps costs nothing. Only an isolated
+        # role is told where it is: for everyone else the harness's own answer
+        # is already right, and a paragraph correcting nothing is noise.
+        task_prompt = skills_mod.compose_prompt(
+            rendered_prompt,
+            skills_mod.declared_skills(agent_config),
+            declared_lenses,
+            skills_mod.declared_instructions(agent_config),
+            location=str(cwd) if isolated else "",
+        )
+        agent_argv = invoke_build_command(adapter, agent_config, task_prompt, cwd)
     except OrchestratorError as exc:
         release_slice_lock_file(lock_file)
         print(f"Error: {exc}")

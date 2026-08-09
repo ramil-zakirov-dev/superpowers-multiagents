@@ -10,12 +10,19 @@ class HarnessAdapter:
     and a prompt cannot break out of its own quotes.
     """
 
-    def build_command(self, agent_config: dict, task_prompt: str) -> list[str]:
+    def build_command(
+        self, agent_config: dict, task_prompt: str, cwd=None
+    ) -> list[str]:
         """Build the argv for the given agent and prompt.
 
         Args:
             agent_config: Agent configuration dict from agents.yaml.
             task_prompt: The fully-rendered task prompt.
+            cwd: The directory the agent must work in — the slice's worktree
+                for an isolated role, the project root otherwise. Optional
+                because it was added after custom adapters existed in the
+                wild; `loader.invoke_build_command` passes it only to an
+                adapter whose signature accepts it.
 
         Returns:
             A list of strings, ready for `subprocess` with `shell=False`.

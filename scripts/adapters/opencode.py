@@ -17,11 +17,23 @@ class OpenCodeAdapter(HarnessAdapter):
     Produces: ``opencode run --model <provider>/<model> [extra_args...] <prompt>``
     """
 
-    def build_command(self, agent_config: dict, task_prompt: str) -> list[str]:
+    def build_command(
+        self, agent_config: dict, task_prompt: str, cwd=None
+    ) -> list[str]:
         model = agent_config.get("model", "kimi-k3")
         provider = agent_config.get("provider", "opencode-go")
 
         argv = ["opencode", "run", "--model", f"{provider}/{model}"]
+        if cwd:
+            # `--dir` is the CLI's own way to say where to run. The subprocess
+            # cwd said the same thing implicitly, and an implicit location is
+            # what left an isolated agent unable to tell which of two trees it
+            # was in. This does not change how opencode resolves the *project*
+            # — a linked worktree's `.git` is a file pointing at the parent, so
+            # the project stays the parent repository and the worktree is
+            # registered as one of its sandboxes — but nothing rests on an
+            # inherited working directory any more.
+            argv += ["--dir", str(cwd)]
         for arg in agent_config.get("extra_args") or []:
             argv.append(str(arg).format(provider=provider, model=model))
         argv.append(task_prompt)

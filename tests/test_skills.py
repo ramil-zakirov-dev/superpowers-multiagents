@@ -133,3 +133,42 @@ def test_opencode_adapter_runs_in_the_given_cwd(monkeypatch):
 def test_opencode_adapter_returns_none_on_any_failure(monkeypatch, kwargs):
     monkeypatch.setattr(subprocess, "run", _fake_run(**kwargs))
     assert OpenCodeAdapter().list_skills({}, Path(".")) is None
+
+
+def test_an_isolated_role_is_told_which_tree_is_its_own():
+    """#22, run 2: the prompt asserted a location the harness contradicted.
+
+    opencode reports the resolved *project* root, which for a linked worktree
+    is the parent repository, while the dispatch claimed "you are already in
+    the worktree". The agent spent the whole run trying to reconcile the two
+    and committed nothing. Only the dispatcher knows both facts, so it states
+    both.
+    """
+    composed = compose_prompt(
+        "Do the work", [], location="C:/repo/.worktrees/slice-01"
+    )
+
+    assert "C:/repo/.worktrees/slice-01" in composed
+    assert "project root" in composed
+
+
+def test_a_non_isolated_role_pays_nothing_for_the_location_paragraph():
+    assert compose_prompt("Do the work", []) == "Do the work"
+
+
+def test_the_location_paragraph_tells_the_agent_not_to_go_looking_outside():
+    """Run 1 died here: the worktree carries tracked files only, the project's
+    test command named an untracked `.venv`, and the agent went to find it."""
+    composed = compose_prompt("Do the work", [], location="/tree")
+
+    assert "report what is missing" in composed
+
+
+def test_instructions_still_win_the_last_word():
+    """The location is a fact; instructions are a project's standing rules,
+    and last position is the tie-break they were given on purpose."""
+    composed = compose_prompt(
+        "Do", [], instructions="Never touch master.", location="/tree"
+    )
+
+    assert composed.index("/tree") < composed.index("Never touch master.")

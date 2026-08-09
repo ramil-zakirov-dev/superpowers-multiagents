@@ -8,8 +8,14 @@ on `main` with its own `feat/` branch empty.
 
 A worktree is a checkout of the same repository with the same layout, so one
 expression is correct for both roles: the document's path relative to the
-project root. That is also why the fix needs no reordering of dispatch — the
-project root is known long before the worktree exists.
+project root.
+
+The invariant is about the *document* path, not about absolute paths in
+general. An isolated dispatch names its worktree outright in the location
+paragraph, because the harness reports a different project root and only the
+dispatcher knows both facts (#22). That path points into the tree the agent
+must use; the one this module exists to keep out of the prompt points away
+from it.
 """
 
 import argparse
@@ -56,7 +62,17 @@ def test_the_prompt_carries_a_path_relative_to_the_project_root(
 
     prompt = prompt_log.read_text(encoding="utf-8")
     assert f"docs/superpowers/specs/{demo_spec.name}" in prompt
-    assert str(tmp_project) not in prompt
+    # The dangerous string is the main tree's copy of the document — the one an
+    # isolated agent must never open. An isolated dispatch does carry one
+    # absolute path, its own worktree in the location paragraph, and that names
+    # the tree it is being sent *to*. Asserting "no absolute path at all" would
+    # forbid saying where the agent is, which is what #22 is about.
+    assert str(demo_spec) not in prompt
+    assert str(tmp_project / "docs") not in prompt
+    if isolated:
+        assert str(tmp_project / ".worktrees" / "slice-01-demo") in prompt
+    else:
+        assert str(tmp_project) not in prompt
     assert "\\" not in prompt.split(" using ")[0], "backslashes survive into the prompt"
 
 

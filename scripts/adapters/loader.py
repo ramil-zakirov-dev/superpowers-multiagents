@@ -5,6 +5,7 @@ Resolves the correct HarnessAdapter for an agent configuration:
 2. Otherwise, selects a built-in adapter by the harness name.
 """
 
+import inspect
 import sys
 import importlib.util
 from pathlib import Path
@@ -44,6 +45,34 @@ def get_harness_adapter(agent_config: dict, project_root: Path) -> HarnessAdapte
         )
 
     return adapter_cls()
+
+
+def invoke_build_command(
+    adapter: HarnessAdapter, agent_config: dict, task_prompt: str, cwd
+) -> list[str]:
+    """Call `adapter.build_command`, passing `cwd` only if it accepts one.
+
+    `cwd` was added to the signature after custom adapters existed in the wild.
+    A project's adapter file is its own code on its own release schedule, and
+    breaking it on upgrade — to hand it an argument it never asked for — would
+    be the plugin reaching into a repository it does not own.
+
+    An unreadable signature is treated as the older form. That is the
+    conservative reading: the two-argument call is what every adapter has
+    always accepted.
+    """
+    try:
+        parameters = inspect.signature(adapter.build_command).parameters
+    except (TypeError, ValueError):
+        return adapter.build_command(agent_config, task_prompt)
+
+    takes_cwd = "cwd" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    if takes_cwd:
+        return adapter.build_command(agent_config, task_prompt, cwd=cwd)
+    return adapter.build_command(agent_config, task_prompt)
 
 
 def _load_custom_adapter(relative_path: str, project_root: Path) -> HarnessAdapter:

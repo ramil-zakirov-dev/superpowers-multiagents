@@ -667,6 +667,40 @@ status is touched and releases the lock, so the slice stays at its entry gate.
 A failing completion hook is reported but does not overwrite the outcome the
 supervisor already recorded.
 
+## Where an isolated agent is told it is
+
+Two things name the working directory of a dispatch, and for an isolated role
+they do not agree.
+
+The orchestrator spawns the harness with the worktree as its subprocess `cwd`
+and, since 2.18.0, passes it again explicitly — `opencode run --dir <worktree>`.
+That part is unambiguous.
+
+The harness's own *project* resolution is not. A linked worktree's `.git` is a
+file pointing back at the parent repository, so tooling that resolves a project
+by its VCS root resolves it to the parent. opencode does exactly that: it keeps
+one project per main worktree and registers linked worktrees as its
+`sandboxes` (visible in `opencode debug scrap`). Its system reminder therefore
+reports the parent path as the working directory while the agent's shell really
+is in the worktree.
+
+Nothing in the plugin can change that, and a project that asserts "you are
+already in the worktree" in its role `instructions` asserts something the
+harness will contradict a paragraph later. Observed: an agent spent an entire
+run trying to reconcile the two and committed nothing.
+
+So the dispatcher states both facts itself, in a paragraph only it can write —
+it created the tree, and it knows what the harness will say about it:
+
+> Your working tree for this slice is `<path>`, a git worktree on its own
+> branch, and it is where your work has to land. Your harness may report a
+> different project root … trust the path named here. Do not step outside it to
+> look for something the tree does not carry; report what is missing instead.
+
+Appended for isolated roles only — for everyone else the harness's answer is
+already right, and a paragraph correcting nothing is noise. It goes before the
+role's `instructions`, which keep the last word.
+
 ## Files an isolated worktree does not get (`worktree.copy`)
 
 `git worktree add` populates a tree from **HEAD**, so an isolated role sees
@@ -677,6 +711,14 @@ work, and reports a failure whose message is about something else entirely.
 
 `worktree.copy` names the files that have to cross anyway. It is empty by
 default, and an empty list costs no extra git call.
+
+**A missing file is worse than a failing test.** An agent that finds its test
+command naming a path the tree does not carry does not stop — it goes looking,
+which for `./.venv/Scripts/python.exe` means stepping into the main checkout.
+That is a directory outside the harness's own project scope, the request to
+enter it is auto-rejected in a non-interactive run, and the dispatch dies
+holding a permission error about a path nobody meant to reach. Declare the file
+here, or name a path-independent command.
 
 ```yaml
 worktree:

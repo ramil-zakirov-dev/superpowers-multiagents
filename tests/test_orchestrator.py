@@ -569,3 +569,59 @@ def test_prompt_is_a_single_argv_element_not_shell_quoted():
     prompt = """Read C:\\path\\file.md and say "hello" — don't quote it"""
     argv = OpenCodeAdapter().build_command({"model": "m", "provider": "p"}, prompt)
     assert argv[-1] == prompt
+
+
+def test_the_opencode_adapter_names_the_directory_it_must_run_in():
+    """#22: the subprocess cwd left the agent's location implicit.
+
+    `opencode run --dir` says it outright. The harness still resolves the
+    *project* to the parent repository — a linked worktree's `.git` is a file
+    pointing back at it — but nothing then rests on an inherited cwd alone.
+    """
+    from scripts.adapters.opencode import OpenCodeAdapter
+
+    argv = OpenCodeAdapter().build_command(
+        {"model": "m", "provider": "p"}, "Task", cwd="C:/repo/.worktrees/slice-01"
+    )
+
+    assert "--dir" in argv
+    assert argv[argv.index("--dir") + 1] == "C:/repo/.worktrees/slice-01"
+    assert argv[-1] == "Task", "the prompt must stay the last positional"
+
+
+def test_no_directory_means_no_dir_flag():
+    from scripts.adapters.opencode import OpenCodeAdapter
+
+    assert "--dir" not in OpenCodeAdapter().build_command({"model": "m"}, "Task")
+
+
+def test_a_custom_adapter_written_before_cwd_existed_is_still_called():
+    """A project's adapter file is its own code on its own release schedule.
+
+    Breaking it on upgrade — to hand it an argument it never asked for — would
+    be the plugin reaching into a repository it does not own.
+    """
+    from scripts.adapters.base import HarnessAdapter
+    from scripts.adapters.loader import invoke_build_command
+
+    class OldAdapter(HarnessAdapter):
+        def build_command(self, agent_config, task_prompt):
+            return ["old", task_prompt]
+
+    class NewAdapter(HarnessAdapter):
+        def build_command(self, agent_config, task_prompt, cwd=None):
+            return ["new", str(cwd), task_prompt]
+
+    assert invoke_build_command(OldAdapter(), {}, "T", "/tree") == ["old", "T"]
+    assert invoke_build_command(NewAdapter(), {}, "T", "/tree") == ["new", "/tree", "T"]
+
+
+def test_an_adapter_taking_kwargs_is_given_the_directory():
+    from scripts.adapters.base import HarnessAdapter
+    from scripts.adapters.loader import invoke_build_command
+
+    class KwargsAdapter(HarnessAdapter):
+        def build_command(self, agent_config, task_prompt, **kwargs):
+            return ["kw", str(kwargs.get("cwd")), task_prompt]
+
+    assert invoke_build_command(KwargsAdapter(), {}, "T", "/tree") == ["kw", "/tree", "T"]

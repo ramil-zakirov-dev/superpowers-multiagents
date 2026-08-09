@@ -29,6 +29,16 @@ Everything here is pure. Whether a skill exists is a question for the harness
 adapter, and printing is the orchestrator's job.
 """
 
+LOCATION_SENTENCE = (
+    "Your working tree for this slice is {path}, a git worktree on its own "
+    "branch, and it is where your work has to land. Your harness may report a "
+    "different project root: a linked worktree's `.git` is a file pointing "
+    "back at the parent repository, so tooling that resolves a project by its "
+    "VCS root resolves it to the parent. That is a fact about the tooling, not "
+    "about you — trust the path named here. Do not step outside it to look for "
+    "something the tree does not carry; report what is missing instead."
+)
+
 SKILL_SENTENCE = "Use these skills where they apply: {names}."
 LENS_SENTENCE = "This document cites lenses; read them before you begin: {refs}."
 INSTRUCTIONS_SENTENCE = (
@@ -99,20 +109,29 @@ def compose_prompt(
     skills: list[str],
     lenses: list[str] | None = None,
     instructions: str = "",
+    location: str = "",
 ) -> str:
-    """Append the skill, lens and instruction paragraphs to a rendered prompt.
+    """Append the location, skill, lens and instruction paragraphs to a prompt.
 
     None of them means the prompt is returned untouched: a project that
     configured none must not pay a single character for them. They are separate
-    paragraphs because they answer different questions — what this role is good
-    at, what this document was written against, and how this project requires
-    the role to work.
+    paragraphs because they answer different questions — where this run happens,
+    what this role is good at, what this document was written against, and how
+    this project requires the role to work.
+
+    Location goes first and is stated by the dispatcher because only the
+    dispatcher holds both halves of it: the tree it created, and the fact that
+    the harness will name a different one. A project that asserted the location
+    itself asserted something it could not guarantee, and an agent handed two
+    contradictory answers spent a whole run trying to reconcile them.
 
     Instructions go last on purpose. They are the paragraph that has to win an
     argument with the harness's own standing rules, and last position is the
     tie-break every other convention already assumes.
     """
     composed = task_prompt
+    if location:
+        composed += "\n\n" + LOCATION_SENTENCE.format(path=location)
     if skills:
         composed += "\n\n" + SKILL_SENTENCE.format(names=", ".join(skills))
     if lenses:
