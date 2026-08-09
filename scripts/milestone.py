@@ -334,6 +334,62 @@ def track_entries(text: str) -> list[str]:
     return entries
 
 
+#: A track's heading inside the region. The template renders
+#: `### track-<n>: <name>`, but nothing downstream parses the number, so the
+#: grammar stays as loose as the rest of the region's prose.
+_TRACK_HEADING = re.compile(r"^###\s+(?P<name>\S.*?)\s*$")
+
+
+def tracks(text: str) -> list[tuple[str, list[str]]]:
+    """`(heading, [slice_id, ...])` for every track declared between the markers.
+
+    The flat view — `track_entries` — answers "which slices does this brief
+    list". This one answers the question a coverage gate actually asks: "is
+    every track this milestone declared realised by anything at all". The two
+    differ on exactly one thing, a heading with no entry beneath it, which is
+    the state a milestone spends most of its life in and the one that no
+    command could previously see.
+
+    Entries before the first heading belong to no track and are not reported
+    here: a region that declares no track declares nothing to be unrealised.
+    They stay visible to `track_entries`, `progress` and `unclosed`, which is
+    what keeps a brief written before tracks had headings reading the same.
+    """
+    begin, end = _region_bounds(text)
+    declared: list[tuple[str, list[str]]] = []
+
+    for line in text.split("\n")[begin + 1:end]:
+        heading = _TRACK_HEADING.match(line)
+        if heading:
+            declared.append((heading.group("name"), []))
+            continue
+        parsed = parse_entry(line)
+        if parsed is not None and declared:
+            declared[-1][1].append(parsed[1])
+
+    return declared
+
+
+def tracks_without_slices(text: str) -> list[str]:
+    """Every declared track that lists no slice — realised by nothing."""
+    return [name for name, entries in tracks(text) if not entries]
+
+
+def coverage_note(text: str) -> str | None:
+    """`"3 tracks, 2 with no slice listed"`, or None when each lists one.
+
+    One phrasing, three callers: `sync`, `check` and the `status` report all
+    print a progress figure counted over entries, and a figure counted over
+    entries reads as full coverage on a brief whose tracks are mostly empty.
+    """
+    declared = tracks(text)
+    empty = [name for name, entries in declared if not entries]
+    if not empty:
+        return None
+    noun = "track" if len(declared) == 1 else "tracks"
+    return f"{len(declared)} {noun}, {len(empty)} with no slice listed"
+
+
 #: Rendered for an entry naming a slice whose spec has not been written yet.
 #: Not an error: a planning document must be able to name what does not exist.
 NOT_SPECCED = "not yet specced"

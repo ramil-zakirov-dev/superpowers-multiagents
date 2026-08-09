@@ -200,7 +200,7 @@ expanded by the harness, so nothing derives it.
 | `/superpowers-multiagents:approve-spec <spec>` | `DRAFT_SPEC` → `SPEC_APPROVED` |
 | `/superpowers-multiagents:approve-plan <plan>` | `PLAN_GENERATED` → `PLAN_APPROVED` |
 | `/superpowers-multiagents:close-slice <plan> [--skip-merge]` | `EXECUTION_COMPLETE` → `VERIFIED_CLOSED`, merge, re-sync briefs |
-| `/superpowers-multiagents:close-milestone <brief>` | `MILESTONE_ACTIVE` → `MILESTONE_CLOSED` |
+| `/superpowers-multiagents:close-milestone <brief>` | `MILESTONE_ACTIVE` → `MILESTONE_CLOSED`, refused while a track lists no slice |
 | `/superpowers-multiagents:dispatch <role> <file>` | Dispatch a configured agent role |
 
 `milestone sync`, `milestone check`, `summary`, `trigger-hook` and `sandbox`
@@ -219,3 +219,10 @@ python "<orchestrator>" milestone check --file docs/superpowers/milestones/2026-
 
 `sync` is for repair and backfill: closing a slice already refreshes every brief
 that lists it.
+
+Both print `N tracks, M with no slice listed` beside the progress figure when a
+declared track lists nothing, and `check` names those tracks. That is normal
+early — a track is declared before its slice is specced — and it is exactly what
+`close-milestone` refuses later. The entry itself is yours to write: the machine
+rewrites entries and never adds one, because which slice realises a track is an
+architect's claim.

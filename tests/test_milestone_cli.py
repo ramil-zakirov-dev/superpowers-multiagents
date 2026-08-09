@@ -167,3 +167,64 @@ def test_status_survives_a_milestone_whose_markers_are_missing(tmp_path, capsys)
     cmd_status(argparse.Namespace(dir=str(tmp_path / "docs" / "superpowers")))
 
     assert "Broken" in capsys.readouterr().out
+
+
+EMPTY_SECOND_TRACK = (
+    "- [ ] slice-01-demo\n\n### track-2: Billing\ndepends_on: —\nLedger and refunds.\n"
+)
+
+
+def _fill_sections(path):
+    """Every required section written, so a report is about tracks alone."""
+    body = path.read_text(encoding="utf-8")
+    for section in milestone.REQUIRED_SECTIONS:
+        if f"## {section}" not in body:
+            body += f"\n## {section}\n\nWritten.\n"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_check_names_the_tracks_that_list_no_slice(tmp_path, capsys):
+    """"complete — all required sections are filled" was true and useless."""
+    path = _fill_sections(_brief(tmp_path, entries=EMPTY_SECOND_TRACK))
+
+    cmd_milestone(_args("check", file=str(path)))
+
+    out = capsys.readouterr().out
+    assert "track-2: Billing" in out
+    assert "2 tracks, 1 with no slice listed" in out
+
+
+def test_check_still_passes_because_an_unbuilt_track_is_normal(tmp_path, capsys):
+    """Exit code unchanged: at MILESTONE_ACTIVE every track is empty by design.
+
+    Failing here would block the one transition that is supposed to happen
+    before any slice exists. Refusal belongs at MILESTONE_CLOSED.
+    """
+    path = _fill_sections(_brief(tmp_path, entries=EMPTY_SECOND_TRACK))
+
+    cmd_milestone(_args("check", file=str(path)))  # no SystemExit
+
+    assert "complete" in capsys.readouterr().out
+
+
+def test_check_says_nothing_about_tracks_when_each_lists_a_slice(tmp_path, capsys):
+    path = _fill_sections(_brief(tmp_path))
+
+    cmd_milestone(_args("check", file=str(path)))
+
+    assert "no slice listed" not in capsys.readouterr().out
+
+
+def test_sync_qualifies_its_progress_line_with_the_tracks_that_list_nothing(
+    tmp_path, capsys
+):
+    """`1/1 slices closed` on a two-track milestone is the lie #25 reports."""
+    path = _brief(tmp_path, entries=EMPTY_SECOND_TRACK)
+    _spec(tmp_path, "slice-01-demo", "VERIFIED_CLOSED", "Demo slice")
+
+    cmd_milestone(_args("sync", file=str(path)))
+
+    out = capsys.readouterr().out
+    assert "1/1 slices closed" in out
+    assert "2 tracks, 1 with no slice listed" in out

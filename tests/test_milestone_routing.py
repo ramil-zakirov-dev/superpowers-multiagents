@@ -312,3 +312,65 @@ def test_a_refused_dispatch_leaves_no_lock_and_no_worktree(tmp_project):
     assert not (tmp_project / ".worktrees").exists()
     locks = tmp_project / ".superpowers" / "locks"
     assert not locks.exists() or not list(locks.glob("*.lock"))
+
+
+def _close(spec):
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "status: SPEC_APPROVED", "status: VERIFIED_CLOSED"
+        ),
+        encoding="utf-8",
+    )
+
+
+TWO_TRACKS_ONE_EMPTY = (
+    "- [ ] slice-01-demo\n\n### track-2: Billing\ndepends_on: —\nLedger and refunds.\n"
+)
+
+
+def test_closing_is_refused_while_a_track_lists_no_slice(tmp_project, demo_spec, capsys):
+    """The hole #25 reports: an unbuilt track could not object to closure.
+
+    Every *listed* slice is closed, so the entry-counting gate saw a complete
+    milestone — while track-2 is declared and realised by nothing.
+    """
+    _close(demo_spec)
+    path = _write_brief(
+        tmp_project, status="MILESTONE_ACTIVE", entries=TWO_TRACKS_ONE_EMPTY
+    )
+
+    with pytest.raises(SystemExit):
+        cmd_set_status(_args(path, "MILESTONE_CLOSED"))
+
+    assert _status_of(path) == "MILESTONE_ACTIVE"
+    assert "track-2: Billing" in capsys.readouterr().out
+
+
+def test_an_open_slice_and_an_empty_track_are_both_reported_in_one_run(
+    tmp_project, capsys
+):
+    """One run names everything blocking closure, not the first thing it hits."""
+    path = _write_brief(
+        tmp_project, status="MILESTONE_ACTIVE", entries=TWO_TRACKS_ONE_EMPTY
+    )
+
+    with pytest.raises(SystemExit):
+        cmd_set_status(_args(path, "MILESTONE_CLOSED"))
+
+    out = capsys.readouterr().out
+    assert "slice-01-demo" in out and "track-2: Billing" in out
+
+
+def test_a_track_that_lists_its_closed_slice_does_not_block_closure(
+    tmp_project, demo_spec
+):
+    _close(demo_spec)
+    path = _write_brief(
+        tmp_project,
+        status="MILESTONE_ACTIVE",
+        entries="- [ ] slice-01-demo\n\n### track-2: Billing\n- [ ] slice-01-demo\n",
+    )
+
+    cmd_set_status(_args(path, "MILESTONE_CLOSED"))
+
+    assert _status_of(path) == "MILESTONE_CLOSED"

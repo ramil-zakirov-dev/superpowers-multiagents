@@ -505,3 +505,53 @@ def test_unclosed_reports_every_open_slice_with_its_status():
         ("slice-01-gateway", "DRAFT_SPEC"),
         ("slice-04-ledger", milestone.NOT_SPECCED),
     ]
+
+
+def test_tracks_reports_every_declared_heading_with_the_slices_beneath_it():
+    assert milestone.tracks(REGION_BRIEF) == [
+        ("track-1: Intake", ["slice-01-gateway", "slice-02-native-sandbox"]),
+        ("track-2: Billing", ["slice-04-ledger"]),
+    ]
+
+
+def test_a_track_realised_by_nothing_is_reported():
+    """The observation #25 was filed for: a heading with no entry beneath it."""
+    text = REGION_BRIEF.replace("- [ ] slice-04-ledger\n", "")
+
+    assert milestone.tracks_without_slices(text) == ["track-2: Billing"]
+
+
+def test_a_brief_whose_every_track_lists_a_slice_reports_none():
+    assert milestone.tracks_without_slices(REGION_BRIEF) == []
+
+
+def test_a_region_with_no_headings_declares_no_tracks():
+    """Entries before any heading belong to no track, and invent none.
+
+    The gate refuses a *declared* track realised by nothing. A region that
+    lists slices without declaring tracks declares nothing to refuse — and its
+    entries still count everywhere they counted before.
+    """
+    text = (
+        f"# M\n\n## Track decomposition\n\n{milestone.TRACKS_BEGIN}\n"
+        f"- [ ] slice-01\n{milestone.TRACKS_END}\n"
+    )
+
+    assert milestone.tracks(text) == []
+    assert milestone.tracks_without_slices(text) == []
+    assert milestone.track_entries(text) == ["slice-01"]
+
+
+def test_prose_inside_a_track_is_not_mistaken_for_a_slice():
+    """`depends_on:` and the track's description sit between heading and entries."""
+    names = dict(milestone.tracks(REGION_BRIEF))
+
+    assert "depends_on:" not in " ".join(names["track-1: Intake"])
+
+
+def test_a_malformed_entry_aborts_reading_the_tracks_too():
+    """Same abort as sync_text: never reinterpret, never silently drop a slice."""
+    text = REGION_BRIEF.replace("- [ ] slice-04-ledger", "- [] slice-04-ledger")
+
+    with pytest.raises(ValidationError):
+        milestone.tracks(text)

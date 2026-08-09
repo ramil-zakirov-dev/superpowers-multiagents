@@ -239,7 +239,7 @@ MILESTONE_DRAFT ⇄ MILESTONE_ACTIVE → MILESTONE_CLOSED
 | :--- | :--- |
 | `DRAFT → ACTIVE` | Every required section present and non-empty |
 | `ACTIVE → DRAFT` | None |
-| `ACTIVE → CLOSED` | Every slice listed in every track is `VERIFIED_CLOSED` |
+| `ACTIVE → CLOSED` | Every declared track lists a slice, and every listed slice is `VERIFIED_CLOSED` |
 
 There is no `FAILED`: no agent is dispatched against a milestone, so there is no
 exit code to derive a terminal status from. There is no merge either — a
@@ -268,3 +268,34 @@ Closing a slice re-syncs every brief that lists it in the same command, so a
 checkbox cannot go stale. A failure to re-sync is reported as a warning and does
 not overturn the close, for the same reason a failing `on_slice_verified_closed`
 hook does not: the outcome was already recorded.
+
+### A track realised by nothing
+
+The region holds two kinds of line, and they answer different questions. The
+entries say which slices a milestone has committed to; the `###` headings say
+which tracks it declared. Every count taken over entries — `progress`, and the
+`unclosed` list the closure gate reads — is therefore blind to a heading with no
+entry beneath it, and reports full coverage on a milestone whose tracks are
+mostly empty. A brief with three tracks, one slice listed and that slice closed
+used to `check` as complete, `sync` as `1/1 slices closed`, and pass
+`MILESTONE_CLOSED`.
+
+`tracks()` reads the headings, and three commands now qualify what they say with
+it:
+
+- `MILESTONE_CLOSED` refuses while any declared track lists no slice, naming
+  each. Both refusals — open slices and empty tracks — are printed before the
+  command exits, because a human about to close a milestone wants everything
+  standing in the way rather than whichever check ran first.
+- `check` names them and stays exit-0. At `MILESTONE_ACTIVE` — the transition it
+  gates — every track is empty by construction, so refusing there would block
+  the normal path.
+- `sync` and the `status` report append `N tracks, M with no slice listed` to the
+  progress figure, so the figure can no longer be read as a claim about the
+  milestone.
+
+Entries before the first heading belong to no track and declare none: a brief
+written without headings has nothing to be unrealised, and reads exactly as it
+did before. Adding an entry is still an architect's claim about which slice
+realises a track — `sync` rewrites entries and never invents one, and this gate
+does not change that. It only makes the absence of the claim visible.

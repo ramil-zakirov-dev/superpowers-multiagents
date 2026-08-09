@@ -247,7 +247,9 @@ def cmd_status(args):
                         milestone_mod.search_dirs_for(filepath), exclude=filepath
                     )
                     closed, total = milestone_mod.progress(text, resolve)
-                    suffix += f" ({closed}/{total} slices closed)"
+                    note = milestone_mod.coverage_note(text)
+                    coverage = f"; {note}" if note else ""
+                    suffix += f" ({closed}/{total} slices closed{coverage})"
                 except OrchestratorError:
                     # A brief without markers is still worth listing; a broken
                     # one must not take the whole report down with it.
@@ -306,6 +308,12 @@ def _set_milestone_status(filepath, new_status, valid_statuses, transitions):
         )
         try:
             open_slices = milestone_mod.unclosed(text, resolve)
+            # Counted over headings, not entries. `unclosed` iterates the
+            # slices a brief lists, so a track realised by nothing contributes
+            # nothing to iterate and cannot object to its own milestone
+            # closing — which is how a two-thirds-built milestone passed this
+            # gate and reported 1/1.
+            empty_tracks = milestone_mod.tracks_without_slices(text)
         except OrchestratorError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
@@ -313,6 +321,18 @@ def _set_milestone_status(filepath, new_status, valid_statuses, transitions):
             print(f"Error: {filepath.name} cannot be closed; these slices are open:")
             for slice_id, status in open_slices:
                 print(f"   - {slice_id} ({status})")
+        if empty_tracks:
+            print(f"Error: {filepath.name} cannot be closed; these tracks list no slice:")
+            for name in empty_tracks:
+                print(f"   - {name}")
+            print(
+                "   A track realised by nothing is unbuilt, not complete. List "
+                "the slice that realises it, or drop the track."
+            )
+        # Both refusals are reported before the first one exits: a human about
+        # to close a milestone wants everything that stands in the way, not
+        # whichever check happened to run first.
+        if open_slices or empty_tracks:
             sys.exit(1)
 
     if not update_frontmatter_status(filepath, new_status, valid_statuses, transitions):
@@ -1095,10 +1115,15 @@ def cmd_milestone(args):
     if args.action == "sync":
         try:
             closed, total = milestone_mod.sync_file(Path(args.file))
+            _frontmatter, text = milestone_mod.load(Path(args.file))
+            note = milestone_mod.coverage_note(text)
         except OrchestratorError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
-        print(f"Synced {args.file} — {closed}/{total} slices closed.")
+        # The progress figure counts entries, so on its own it reads as a
+        # completeness claim about the milestone. It is one about its slices.
+        coverage = f"; {note}" if note else ""
+        print(f"Synced {args.file} — {closed}/{total} slices closed{coverage}.")
         return
 
     if args.action == "check":
@@ -1110,11 +1135,28 @@ def cmd_milestone(args):
         missing = milestone_mod.missing_sections(text)
         if not missing:
             print(f"{args.file}: complete — all required sections are filled.")
-            return
-        print(f"{args.file} is incomplete. Empty or missing sections:")
-        for section in missing:
-            print(f"   - {section}")
-        sys.exit(1)
+        else:
+            print(f"{args.file} is incomplete. Empty or missing sections:")
+            for section in missing:
+                print(f"   - {section}")
+
+        # Reported, never fatal. At MILESTONE_ACTIVE — the one transition this
+        # command gates — every track is empty by construction, so refusing
+        # here would block the normal path. The refusal belongs at
+        # MILESTONE_CLOSED, where an unrealised track means an unbuilt one.
+        try:
+            note = milestone_mod.coverage_note(text)
+            empty_tracks = milestone_mod.tracks_without_slices(text)
+        except OrchestratorError as exc:
+            print(f"Track state unavailable: {exc}")
+            note, empty_tracks = None, []
+        if note:
+            print(f"{note}:")
+            for name in empty_tracks:
+                print(f"   - {name}")
+
+        if missing:
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
