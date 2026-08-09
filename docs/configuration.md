@@ -24,6 +24,7 @@ state_machine:
     - DRAFT_SPEC
     - SPEC_APPROVED
     - PLANNING
+    - PLAN_DRAFTING
     - PLAN_GENERATED
     - PLAN_APPROVED
     - EXECUTING
@@ -34,10 +35,11 @@ state_machine:
   transitions:
     DRAFT_SPEC: ["SPEC_APPROVED"]
     SPEC_APPROVED: ["PLANNING", "DRAFT_SPEC"]
-    PLANNING: ["PLAN_GENERATED", "FAILED"]
+    PLANNING: ["PLAN_GENERATED", "SPEC_APPROVED", "FAILED"]
+    PLAN_DRAFTING: ["PLAN_GENERATED"]
     PLAN_GENERATED: ["PLAN_APPROVED", "PLANNING"]
     PLAN_APPROVED: ["EXECUTING", "PLAN_GENERATED"]
-    EXECUTING: ["EXECUTION_COMPLETE", "MERGE_CONFLICT", "FAILED"]
+    EXECUTING: ["EXECUTION_COMPLETE", "MERGE_CONFLICT", "PLAN_APPROVED", "FAILED"]
     EXECUTION_COMPLETE: ["VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"]
     FAILED: ["SPEC_APPROVED", "PLAN_APPROVED"]
     VERIFIED_CLOSED: []
@@ -56,6 +58,7 @@ agents:
     isolated_worktree: false
     produces: plans
     produced_title: "{title} implementation plan"
+    produced_status: PLAN_DRAFTING
     prompt_template: |-
       Read the spec at {file} and create a detailed TDD implementation plan using the writing-plans skill. Save it in docs/superpowers/plans/.
 
@@ -115,6 +118,7 @@ sandbox:
 | `instructions` | string | Optional project rules appended last, above the harness's own (see [Instructions](#instructions-per-role-project-rules)) |
 | `produces` | string | Optional sibling directory the role's document lands in, e.g. `plans` (see [Produced documents](#produced-documents)) |
 | `produced_title` | string | Optional template for the produced document's `title`, with one token, `{title}` — the source's own. Default for the planner: `"{title} implementation plan"`. Without one the source's title carries through unchanged |
+| `produced_status` | string | Status the produced document is *born* with, rendered into the frontmatter block the role is told to reproduce. The supervisor promotes it to `success_status` when the run ends. Default for the planner: `PLAN_DRAFTING`. Without one the document is born at `success_status`, which means every half-written file claims completion |
 
 ## Prompt templates and their skill dependency
 
@@ -213,9 +217,15 @@ are different statements.
 
 **After the run**, exiting 0 is no longer enough. The supervisor looks for a
 document in that directory carrying this slice's `slice_id` and a `status:`; if
-there is none, the slice goes to `FAILED` with the reason in the log instead of
-to the role's success status. Failing where the work happened is much cheaper
-than failing at the next human gate.
+there is none, the slice goes back to the gate it was dispatched from with the
+reason in the log, instead of on to the role's success status. Failing where the
+work happened is much cheaper than failing at the next human gate.
+
+When the document *is* there, the supervisor promotes it from `produced_status`
+to `success_status` — see the key's own row above. A document the machine cannot
+move that way fails the run: the next gate reads that status, so the document
+would sit where nothing can advance it, and the natural repair is the one this
+pipeline forbids. A role that wrote `success_status` itself is left alone.
 
 A single directory name, always a sibling of the source document's own — a path
 is refused. Absent means no contract and no check. The check is skipped for a
@@ -339,6 +349,13 @@ Add any role to the `agents` section. Declare `success_status` alongside
 `0`. Without it the agent runs, but its outcome is never recorded — the
 supervisor logs a warning and the slice keeps its in-progress status.
 
+Declare the way back too. A run that fails returns the document to the gate it
+was dispatched from, so every `allowed_statuses` entry must be reachable from
+the role's `in_progress_status` — `REVIEWING: ["REVIEW_PASSED", "EXECUTION_COMPLETE"]`
+for the reviewer below. Omit it and the supervisor falls back to `FAILED`,
+which is why that status still exists; a document stranded at an in-progress
+status is worse than one in a state nothing writes any more.
+
 ```yaml
 state_machine:
   valid_statuses:
@@ -356,7 +373,7 @@ state_machine:
     - VERIFIED_CLOSED
   transitions:
     EXECUTION_COMPLETE: ["REVIEWING", "VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"]
-    REVIEWING: ["REVIEW_PASSED", "FAILED"]
+    REVIEWING: ["REVIEW_PASSED", "EXECUTION_COMPLETE", "FAILED"]
     REVIEW_PASSED: ["VERIFIED_CLOSED", "EXECUTING"]
     FAILED: ["SPEC_APPROVED", "PLAN_APPROVED", "EXECUTION_COMPLETE"]
 
@@ -410,8 +427,8 @@ any success status. What counts as "left behind" depends on the role:
 
 | Role | Artifact | Failure to produce it |
 |---|---|---|
-| `isolated_worktree: true` | commits on `feat/<slice_id>` since the branch tip recorded at dispatch | `FAILED` |
-| declares `produces` | a document under that directory carrying the slice's `slice_id` and a `status` | `FAILED` |
+| `isolated_worktree: true` | commits on `feat/<slice_id>` since the branch tip recorded at dispatch | back to the gate |
+| declares `produces` | a document under that directory carrying the slice's `slice_id` and a `status` | back to the gate |
 | neither | nothing to check | success status |
 
 The commit count is taken against the branch tip as it stood when the
@@ -506,7 +523,8 @@ its first iteration, every time — failing open exactly when it matters.
 
 ### Waking only on success (`--until-success`)
 
-By default the wait ends on *any* settled status, `FAILED` included. That is
+By default the wait ends on *any* settled status, a gate returned to after a
+failed run included. That is
 right for a caller that acts on a failure — reads the log, repairs the cause,
 re-dispatches. It is wrong for one that does not: an operator who repairs
 failures by hand gets a wakeup they will do nothing with, and three of them in
@@ -544,17 +562,30 @@ hiding it would be its own lie):
                         ⚠ abandoned: lock names supervisor pid 41676, which is not alive; run `reconcile`
 ```
 
-`reconcile --file <document> --yes` is the way out. Legal only when the
-document sits at a role's `in_progress_status` and no live supervisor owns
-the slice, it moves the document to `FAILED` — the truthful statement about
-the *dispatch*, which went unrecorded — releases the stale lock, and prints
-what it based the verdict on: the lock's pid, its liveness, the status it
-moved from. `FAILED` says nothing about the *work*; judging that is the audit
-the pipeline already requires before `close-slice`. From `FAILED` the machine
-allows `SPEC_APPROVED` and `PLAN_APPROVED`, so you re-enter at the gate you
-choose. Without `--yes`, reconcile prints the same evidence and changes
-nothing. It refuses outright when a live supervisor owns the slice —
-reconciling a running dispatch would race the runner's own epilogue.
+Work in progress with no lock at all is reported too, and deliberately not as a
+warning — it is how a slice gets finished after a dispatch died:
+
+```
+  [EXECUTING          ] 2026-08-04-foo-plan.md - ...
+                        · in progress with no supervisor: owned by hand
+```
+
+`reconcile --file <document> --yes` is the way out. It returns the document to
+the gate its dispatch was accepted from — derived from the role's own
+`allowed_statuses`, and `FAILED` when a role declares more than one and there is
+no single origin to return to — releases the stale lock, and prints what it
+based the verdict on: the lock's pid, its liveness, the status it moved from.
+The gate says nothing about the *work* the dead run may have landed; judging
+that is the audit the pipeline already requires before `close-slice`, and from
+the gate you can either re-dispatch or finish by hand. Without `--yes`,
+reconcile prints the same evidence and changes nothing.
+
+It refuses in two cases. A live supervisor owns the slice — reconciling a
+running dispatch would race the runner's own epilogue. Or there is no lock at
+all, which is not a dead dispatch but a human at work: dispatch takes the lock
+before it writes the in-progress status, so a document at one with no lock was
+never dispatched into it. Nothing went unrecorded there and nothing needs
+releasing; `set-status` is that document's tool, not this.
 
 ## Which directory a command wants
 

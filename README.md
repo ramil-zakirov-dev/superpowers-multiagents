@@ -79,7 +79,7 @@ flowchart TD
     A3 -->|"exit code"| R
     A4 -->|"exit code"| R
     R -->|"exit 0 ➔ PLAN_GENERATED / EXECUTION_COMPLETE"| A2
-    R -->|"exit ≠0"| F["🚫 FAILED"]
+    R -->|"the run died ➔ back to<br/>SPEC_APPROVED / PLAN_APPROVED"| F["↩️ its gate"]
     F --> A2
     F -->|"teardown (isolated agents only,<br/>e.g. executor by default)"| TD1["🧹 down (containers)"]
     A2 -->|"Diff Audit"| Human
@@ -104,11 +104,12 @@ The lifecycle of every feature slice is tracked transparently inside Markdown **
 | `DRAFT_SPEC` | **Opus 5** | Drafting design spec and interface contracts. |
 | `SPEC_APPROVED` | **Human Gate** | Human approves the design spec. |
 | `PLANNING` | **Planner (configurable)** | Background worker generating detailed TDD plan. |
-| `PLAN_GENERATED` | **Orchestrator (from exit code)** | `slice-N-plan.md` written to disk. |
+| `PLAN_DRAFTING` | **Planner** | The plan file exists and is being written. Says nothing about completion. |
+| `PLAN_GENERATED` | **Orchestrator (from exit code)** | `slice-N-plan.md` finished — written on both the spec and the plan. |
 | `PLAN_APPROVED` | **Opus 5 Gate** | Opus 5 audits plan against spec contracts. |
 | `EXECUTING` | **Executor (configurable)**| Background TDD execution (Red ➔ Green ➔ Commit). |
 | `EXECUTION_COMPLETE` | **Orchestrator (from exit code)** | All tasks finished & test suite 100% PASS. |
-| `FAILED` | **Orchestrator** | Set by the orchestrator when the agent exits non-zero. |
+| `FAILED` | *(legacy)* | Nothing writes it. A dispatch that dies returns its document to the gate it started from. Kept so documents already there keep their way out. |
 | `VERIFIED_CLOSED` | **Opus 5 Gate** | Opus 5 audits `git diff` and marks slice closed. |
 
 ### Milestone lifecycle
@@ -271,23 +272,25 @@ otherwise clutter every diff you take.
 
 ## 🚑 When a Slice Fails
 
-A non-zero exit from the agent puts the slice in `FAILED` and releases the lock.
-Nothing is stranded and nothing needs hand-editing.
+A run that dies puts its document back at the gate the dispatch was accepted
+from — `PLANNING → SPEC_APPROVED`, `EXECUTING → PLAN_APPROVED` — and releases
+the lock. Nothing is stranded and nothing needs hand-editing. The status says
+where the *work* stands; what happened to the *run* is in the log, in more
+detail than a status could hold.
 
 1. Read the transcript: `... summary --slice <slice-id> --project-root .`
 2. Fix the cause — a broken plan, a missing dependency, a failing environment hook.
-3. Return the slice to the gate it came from and dispatch again:
+3. Decide what the dead run left behind, then either dispatch again, or finish
+   it yourself:
 
 ```bash
-# planning failed -> back to the spec gate
-python -m scripts.orchestrator set-status --file docs/superpowers/specs/<spec>.md --status SPEC_APPROVED
-
-# execution failed -> back to the plan gate
-python -m scripts.orchestrator set-status --file docs/superpowers/plans/<plan>.md --status PLAN_APPROVED
+# taking it over by hand: say so, then move it on when the work is done
+python -m scripts.orchestrator set-status --file docs/superpowers/plans/<plan>.md --status EXECUTING
 ```
 
-`FAILED` accepts exactly these two transitions, because they are the entry
-points of the planner and executor roles.
+An in-progress status with no supervisor behind it is legal and reported as
+`· owned by hand`. Only an in-progress status behind a *stale lock* is
+abandonment, and `reconcile` is the answer to that one.
 
 ---
 

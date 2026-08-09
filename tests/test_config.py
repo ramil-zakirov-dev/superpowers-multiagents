@@ -275,3 +275,38 @@ def test_a_declared_list_survives_a_partial_override():
     validate_config(merged)
     assert merged["worktree"]["copy"] == [".env"]
     assert merged["sandbox"]["enabled"] is False       # nothing else disturbed
+
+
+def test_every_role_can_return_its_document_to_the_gate_it_started_from():
+    """#23: a failed dispatch puts the slice back where the human left it.
+
+    Without these edges the supervisor's only legal terminal write is FAILED,
+    and the two exits FAILED offers both send the slice back to be
+    re-dispatched — which throws away whatever the failed run did land.
+    """
+    transitions = DEFAULT_CONFIG["state_machine"]["transitions"]
+
+    for name, role in DEFAULT_CONFIG["agents"].items():
+        in_progress = role["in_progress_status"]
+        for gate in role["allowed_statuses"]:
+            assert gate in transitions[in_progress], (
+                f"{name} cannot return {in_progress} to its gate {gate}"
+            )
+
+
+def test_a_plan_is_born_drafting_and_only_the_epilogue_calls_it_generated():
+    """#21: PLAN_GENERATED must be a claim about completion, not about typing."""
+    machine = DEFAULT_CONFIG["state_machine"]
+    planner = DEFAULT_CONFIG["agents"]["planner"]
+
+    assert planner["produced_status"] == "PLAN_DRAFTING"
+    assert "PLAN_DRAFTING" in machine["valid_statuses"]
+    assert machine["transitions"]["PLAN_DRAFTING"] == ["PLAN_GENERATED"]
+
+
+def test_failed_remains_reachable_out_of(tmp_path):
+    """Nothing writes FAILED any more, but documents already sitting there
+    must keep their way out — and a custom machine may still declare it."""
+    transitions = DEFAULT_CONFIG["state_machine"]["transitions"]
+
+    assert transitions["FAILED"]

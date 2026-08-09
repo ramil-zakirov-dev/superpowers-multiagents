@@ -377,12 +377,12 @@ def test_dispatch_wait_blocks_until_the_supervisor_reports(tmp_project, demo_spe
         cmd_dispatch_agent(args)
 
     assert excinfo.value.code == 0
-    # The slow agent produces no plan, so runner._missing_artifact
-    # marks the slice FAILED. --wait correctly observed the dispatch
-    # ending and returned exit 0.
+    # The slow agent produces no plan, so runner._unmet_postcondition sends
+    # the spec back to the gate it was dispatched from. --wait correctly
+    # observed the dispatch ending and returned exit 0.
     assert (
         parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
-        == "FAILED"
+        == "SPEC_APPROVED"
     )
 
 

@@ -69,7 +69,9 @@ def rich_dispatch(tmp_project, demo_spec, monkeypatch, tmp_path):
     [
         'slice_id: "slice-01-demo"',
         'title: "Checkout flow implementation plan"',
-        "status: PLAN_GENERATED",
+        # The status the document is born with. `PLAN_GENERATED` here would
+        # have every half-written plan claiming completion — see #21.
+        "status: PLAN_DRAFTING",
         'target_version: "2.4.0"',
         'depends_on: ["billing-api"]',
     ],

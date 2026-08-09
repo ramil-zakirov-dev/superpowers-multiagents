@@ -25,18 +25,31 @@ DEFAULT_CONFIG = {
     },
     "state_machine": {
         "valid_statuses": [
-            "DRAFT_SPEC", "SPEC_APPROVED", "PLANNING", "PLAN_GENERATED",
-            "PLAN_APPROVED", "EXECUTING", "EXECUTION_COMPLETE",
+            "DRAFT_SPEC", "SPEC_APPROVED", "PLANNING", "PLAN_DRAFTING",
+            "PLAN_GENERATED", "PLAN_APPROVED", "EXECUTING", "EXECUTION_COMPLETE",
             "MERGE_CONFLICT", "FAILED", "VERIFIED_CLOSED"
         ],
+        #: A status names where the *work* stands. Two consequences shape this
+        #: table. An in-progress status can return to the gate its dispatch
+        #: started from, so a run that died puts the slice back where the human
+        #: left it instead of into a state they have to hand-walk out of. And a
+        #: produced document is born `PLAN_DRAFTING` — the planner writes the
+        #: file the moment it starts typing, so `PLAN_GENERATED` has to be
+        #: something only the supervisor's epilogue can say.
         "transitions": {
             "DRAFT_SPEC": ["SPEC_APPROVED"],
             "SPEC_APPROVED": ["PLANNING", "DRAFT_SPEC"],
-            "PLANNING": ["PLAN_GENERATED", "FAILED"],
+            "PLANNING": ["PLAN_GENERATED", "SPEC_APPROVED", "FAILED"],
+            "PLAN_DRAFTING": ["PLAN_GENERATED"],
             "PLAN_GENERATED": ["PLAN_APPROVED", "PLANNING"],
             "PLAN_APPROVED": ["EXECUTING", "PLAN_GENERATED"],
-            "EXECUTING": ["EXECUTION_COMPLETE", "MERGE_CONFLICT", "FAILED"],
+            "EXECUTING": [
+                "EXECUTION_COMPLETE", "MERGE_CONFLICT", "PLAN_APPROVED", "FAILED"
+            ],
             "EXECUTION_COMPLETE": ["VERIFIED_CLOSED", "EXECUTING", "MERGE_CONFLICT"],
+            #: Nothing writes this any more. The exits stay so a document that
+            #: reached it under an older version — or under a custom machine
+            #: that still declares it — keeps its way back to a gate.
             "FAILED": ["SPEC_APPROVED", "PLAN_APPROVED"],
             "VERIFIED_CLOSED": [],
             "MERGE_CONFLICT": ["VERIFIED_CLOSED", "EXECUTING", "PLAN_APPROVED"]
@@ -52,6 +65,15 @@ DEFAULT_CONFIG = {
             "success_status": "PLAN_GENERATED",
             "isolated_worktree": False,
             "produces": "plans",
+            #: The status the produced document is *born* with, rendered into
+            #: the frontmatter the prompt tells the role to reproduce. A
+            #: planner following that instruction writes the file the moment it
+            #: starts drafting and then works on it for minutes, so a file
+            #: carrying `success_status` said "generated" for almost the whole
+            #: run — byte-identical to the same file after the epilogue, and
+            #: meaning the opposite. The epilogue promotes it on success, which
+            #: makes completion a claim by the one component that observes it.
+            "produced_status": "PLAN_DRAFTING",
             #: How the produced document names itself. A template rather than
             #: a hardcoded noun because `produces` is configurable: a role
             #: that produces something other than a plan must not be handed
@@ -171,6 +193,7 @@ KNOWN_AGENT_KEYS = frozenset({
     "instructions",
     "produces",
     "produced_title",
+    "produced_status",
 })
 
 

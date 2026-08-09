@@ -17,7 +17,10 @@ def _set_status(spec, status):
     spec.write_text(text.replace("status: SPEC_APPROVED", f"status: {status}"), encoding="utf-8")
 
 
-def _supervise(tmp_project, demo_spec, argv):
+def _supervise(tmp_project, demo_spec, argv, gate_status="SPEC_APPROVED"):
+    """Supervise one run. `gate_status` is what a real dispatch records: the
+    status the document sat at when the dispatch was accepted, and the place a
+    failed run puts it back."""
     lock_file = acquire_slice_lock("slice-01-demo", tmp_project)
     log_file = log_path(tmp_project, "planner", demo_spec.stem)
     code = run_supervised(
@@ -28,6 +31,7 @@ def _supervise(tmp_project, demo_spec, argv):
         log_file=log_file,
         argv=argv,
         cwd=tmp_project,
+        gate_status=gate_status,
     )
     return code, lock_file, log_file
 
@@ -44,7 +48,7 @@ def test_success_needs_the_artifact_not_just_a_zero_exit(tmp_project, demo_spec)
         tmp_project, demo_spec, [sys.executable, "-c", "print('a plan, in my head')"]
     )
     assert code == 0
-    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
     assert "left no document the pipeline can see" in log_file.read_text(encoding="utf-8")
 
 
@@ -55,10 +59,31 @@ def test_success_sets_success_status(tmp_project, demo_spec):
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_GENERATED"
 
 
-def test_failure_sets_failed(tmp_project, demo_spec):
-    """A crashed agent must land in FAILED, not hang in PLANNING forever."""
+def test_failure_returns_the_document_to_the_gate_it_was_dispatched_from(
+    tmp_project, demo_spec
+):
+    """#23: a run that died leaves the slice where the human left it.
+
+    Not FAILED. The work a partial run did land is still on disk, and the two
+    exits FAILED offered both meant re-dispatching to recover a status — which
+    throws that work away. The log records what happened to the run; the status
+    records where the work stands.
+    """
     _set_status(demo_spec, "PLANNING")
     code, _, _ = _supervise(tmp_project, demo_spec, [sys.executable, "-c", "raise SystemExit(3)"])
+    assert code == 3
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
+
+
+def test_a_run_with_no_recorded_gate_still_lands_somewhere(tmp_project, demo_spec):
+    """Only reachable when run_supervised is driven directly — the dispatcher
+    always records the gate. FAILED beats stranding the document in PLANNING,
+    which is the one outcome nothing can walk out of."""
+    _set_status(demo_spec, "PLANNING")
+    code, _, _ = _supervise(
+        tmp_project, demo_spec, [sys.executable, "-c", "raise SystemExit(3)"],
+        gate_status="",
+    )
     assert code == 3
     assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
 
@@ -231,3 +256,71 @@ def test_main_errors_when_no_command_is_given():
         assert False, "expected SystemExit from argparse.error"
     except SystemExit as exc:
         assert exc.code != 0
+
+
+def _plan(tmp_project):
+    return tmp_project / "docs" / "superpowers" / "plans" / "2026-07-26-slice-01-demo-plan.md"
+
+
+def test_the_epilogue_promotes_the_plan_the_planner_drafted(tmp_project, demo_spec):
+    """#21: `PLAN_GENERATED` is a claim about completion, so the component
+    that watched the run end is the one that makes it."""
+    _set_status(demo_spec, "PLANNING")
+    code, _, _ = _supervise(tmp_project, demo_spec, DID_ITS_JOB)
+
+    assert code == 0
+    plan = parse_frontmatter(_plan(tmp_project).read_text(encoding="utf-8"))
+    assert plan["status"] == "PLAN_GENERATED"
+
+
+#: A planner that produces a plan carrying whatever status it is given.
+#: `%s` rather than a format literal: the body is full of braces-free but
+#: quote-heavy YAML, and one substitution is all this needs.
+_AGENT_TEMPLATE = '''
+import pathlib
+
+plans = pathlib.Path("docs/superpowers/plans")
+plans.mkdir(parents=True, exist_ok=True)
+(plans / "2026-07-26-slice-01-demo-plan.md").write_text(
+    '---\\nslice_id: "slice-01-demo"\\nstatus: %s\\n---\\n\\n# P\\n',
+    encoding="utf-8",
+)
+'''
+
+
+def _agent_writing_plan_status(tmp_project, status):
+    """A script that produces a plan carrying `status`, run from the project."""
+    script = tmp_project / f"agent_{status.lower()}.py"
+    script.write_text(_AGENT_TEMPLATE % status, encoding="utf-8")
+    return [sys.executable, "-B", str(script)]
+
+
+def test_a_plan_the_role_already_marked_generated_is_left_alone(tmp_project, demo_spec):
+    """An agent that ignored the instruction produced exactly what the next
+    gate wants. Failing the run over the disobedience would help nobody."""
+    _set_status(demo_spec, "PLANNING")
+    code, _, _ = _supervise(
+        tmp_project, demo_spec, _agent_writing_plan_status(tmp_project, "PLAN_GENERATED")
+    )
+
+    assert code == 0
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_GENERATED"
+    plan = parse_frontmatter(_plan(tmp_project).read_text(encoding="utf-8"))
+    assert plan["status"] == "PLAN_GENERATED"
+
+
+def test_a_plan_that_cannot_be_promoted_fails_the_run(tmp_project, demo_spec):
+    """A document the next gate cannot advance is not a produced document.
+
+    The natural repair at that point is to edit frontmatter by hand, which
+    this pipeline's own rules forbid — so the run says so instead, and the
+    spec goes back to its gate.
+    """
+    _set_status(demo_spec, "PLANNING")
+    code, _, log_file = _supervise(
+        tmp_project, demo_spec, _agent_writing_plan_status(tmp_project, "VERIFIED_CLOSED")
+    )
+
+    assert code == 0
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
+    assert "cannot move" in log_file.read_text(encoding="utf-8")

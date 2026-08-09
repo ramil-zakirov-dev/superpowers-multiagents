@@ -165,14 +165,22 @@ def test_a_live_supervisor_is_not_annotated(base, capsys):
     assert "abandoned" not in capsys.readouterr().out
 
 
-def test_a_missing_lock_is_reported_as_abandonment(base, capsys):
+def test_a_missing_lock_is_reported_as_work_owned_by_hand(base, capsys):
+    """#24: an in-progress status no longer implies a supervisor.
+
+    Dispatch takes the lock before it writes the status, so no lock means no
+    dispatch — a human claimed the work. Reported, because "no supervisor" is
+    what the reader would otherwise have to infer from silence, but not as a
+    warning: this is how a slice gets finished after a dispatch died.
+    """
     _doc(base, "plans", "p.md", '---\nslice_id: "a"\nstatus: EXECUTING\n---\n')
 
     _status(base)
     out = capsys.readouterr().out
 
-    assert "abandoned" in out
-    assert "no lock file" in out
+    assert "owned by hand" in out
+    assert "abandoned" not in out
+    assert "reconcile" not in out
 
 
 def test_status_mutates_nothing_it_reports(base, capsys):

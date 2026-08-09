@@ -67,7 +67,9 @@ COMMITS_SOMETHING = (
 DOES_NOTHING = "print('I thought about it')"
 
 
-def _supervise_executor(project_root, document, argv, base_ref, cwd=None):
+def _supervise_executor(
+    project_root, document, argv, base_ref, cwd=None, gate_status="PLAN_APPROVED"
+):
     lock_file = acquire_slice_lock("slice-01-demo", project_root)
     log_file = log_path(project_root, "executor", document.stem)
     code = run_supervised(
@@ -79,6 +81,7 @@ def _supervise_executor(project_root, document, argv, base_ref, cwd=None):
         argv=argv,
         cwd=cwd or project_root,
         base_ref=base_ref,
+        gate_status=gate_status,
     )
     return code, log_file
 
@@ -105,7 +108,7 @@ def _make_slice_branch(project_root):
 # --- the postcondition itself ---
 
 
-def test_an_isolated_run_that_left_no_commits_is_recorded_failed(
+def test_an_isolated_run_that_left_no_commits_returns_to_its_gate(
     tmp_project, demo_spec
 ):
     _use_isolated_executor(tmp_project, demo_spec, DOES_NOTHING)
@@ -119,7 +122,7 @@ def test_an_isolated_run_that_left_no_commits_is_recorded_failed(
     )
 
     assert code == 0
-    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_APPROVED"
     log = log_file.read_text(encoding="utf-8")
     assert "feat/slice-01-demo" in log, "the verdict must name the branch it looked at"
     assert "no commits" in log
@@ -165,7 +168,7 @@ def test_a_redispatch_that_adds_nothing_fails_even_on_a_branch_with_history(
     )
 
     assert code == 0
-    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_APPROVED"
     assert "no commits" in log_file.read_text(encoding="utf-8")
 
 
@@ -186,7 +189,7 @@ def test_an_unanswerable_count_does_not_certify_the_run(tmp_project, demo_spec):
     )
 
     assert code == 0
-    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "PLAN_APPROVED"
     assert "could not count" in log_file.read_text(encoding="utf-8")
 
 
@@ -203,9 +206,10 @@ def test_a_non_isolated_role_still_answers_with_its_document(tmp_project, demo_s
         lock_file=lock_file, log_file=log_file,
         argv=[sys.executable, "-c", "print('a plan, in my head')"],
         cwd=tmp_project,
+        gate_status="SPEC_APPROVED",
     )
 
-    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "FAILED"
+    assert parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"] == "SPEC_APPROVED"
     assert "left no document the pipeline can see" in log_file.read_text(encoding="utf-8")
 
 
@@ -214,9 +218,9 @@ def test_a_non_isolated_role_still_answers_with_its_document(tmp_project, demo_s
 
 def test_dispatch_wires_the_base_ref_end_to_end(tmp_project, demo_spec):
     """Through the real command: an isolated dispatch whose agent commits
-    nothing must land in FAILED. If the dispatcher forgets to capture and pass
-    the base ref, the check silently does nothing and this is the only test
-    that notices.
+    nothing must go back to the gate it was dispatched from. If the dispatcher
+    forgets to capture and pass the base ref, the check silently does nothing
+    and this is the only test that notices.
     """
     _use_isolated_executor(tmp_project, demo_spec, DOES_NOTHING)
 
@@ -226,8 +230,8 @@ def test_dispatch_wires_the_base_ref_end_to_end(tmp_project, demo_spec):
 
     assert _wait_for(
         lambda: parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
-        == "FAILED"
-    ), "an isolated dispatch that produced no commits was not recorded FAILED"
+        == "PLAN_APPROVED"
+    ), "an isolated dispatch that produced no commits did not return to its gate"
 
 
 def test_dispatch_records_success_when_the_agent_commits(tmp_project, demo_spec):

@@ -75,14 +75,14 @@ immediately.
                             +-- captures stdout+stderr to .superpowers/logs/
                             +-- claims the slice lock with its own PID
                             +-- on exit 0   -> the role's success_status
-                            +-- on exit !=0 -> FAILED
+                            +-- on exit !=0 -> back to the dispatch's gate
                             +-- fires on_<role>_complete / on_<role>_failed
                             +-- releases the lock, on every path
 
 The terminal status is derived from the child's exit code rather than asked
 of the agent in its prompt. An agent that crashes, or simply never reports,
-therefore cannot strand a slice: it lands in `FAILED`, which transitions back
-to the gate it came from.
+therefore cannot strand a slice: the dispatcher records the status the document
+sat at when the dispatch was accepted, and the supervisor writes it back.
 
 The agent command is passed as an argument vector and spawned with
 `shell=False`. No shell parses a prompt, a path, or a configured argument at
@@ -166,8 +166,8 @@ tears down the stack it merely attached to.
 **Teardown always follows the corresponding hook, never precedes or replaces
 it.** Both call sites run the hook first and only then call
 `sandbox.tear_down`; both wrap the teardown call in its own `try/except` that
-downgrades a failure to a warning, because the slice's outcome — `FAILED` or
-`VERIFIED_CLOSED` — was already recorded by the time teardown runs, and a
+downgrades a failure to a warning, because the slice's outcome — its gate again
+or `VERIFIED_CLOSED` — was already recorded by the time teardown runs, and a
 container that won't stop must not overturn it.
 
 **State invariant: the allocation record under `.superpowers/sandbox/` is
@@ -215,15 +215,49 @@ See [configuration.md](configuration.md) for the full `agents.yaml` schema.
 
 ## State Machine
 
-The default lifecycle has 10 states. Both statuses and transitions can be overridden in `agents.yaml`.
+The default lifecycle has 11 states. Both statuses and transitions can be overridden in `agents.yaml`.
 
 ```
 DRAFT_SPEC → SPEC_APPROVED → PLANNING → PLAN_GENERATED → PLAN_APPROVED → EXECUTING → EXECUTION_COMPLETE → VERIFIED_CLOSED
-                                                                                         ↘ MERGE_CONFLICT ↗
-                                              ↘ FAILED (orchestrator exit !=0) ↗
+                                  |                                          |                ↘ MERGE_CONFLICT ↗
+                                  ↘ SPEC_APPROVED (the run died) ↙           ↘ PLAN_APPROVED (the run died)
 ```
 
-`FAILED` is set by the orchestrator, from the dispatched agent's exit code, never by the agent itself. It returns the slice to the gate it came from — `PLANNING → FAILED → SPEC_APPROVED`, `EXECUTING → FAILED → PLAN_APPROVED` — so a crashed or misbehaving agent never strands a slice.
+### A status names where the work stands
+
+Not who is running. Two rules follow, and between them they are why nothing
+writes `FAILED` any more.
+
+**A run that dies puts the document back at its gate.** The dispatcher records
+the status the document sat at when the dispatch was accepted and hands it to
+the supervisor, which writes it back on any failure: a non-zero exit, an unmet
+postcondition, a log it could not even open. `PLANNING → SPEC_APPROVED`,
+`EXECUTING → PLAN_APPROVED`. What happened to the *run* is in the log, in more
+detail than a status could hold; what the status has to say is where the work
+stands, and after a failed run it stands exactly where the human left it.
+
+`FAILED` was the alternative, and it cost: its two exits both meant
+re-dispatching to recover a status, which throws away whatever a partial run
+did land. It survives as a fallback for a custom machine that declares no edge
+home, and as the exit for documents that reached it under an older version — a
+document stranded at an in-progress status is worse than one in a state nothing
+writes.
+
+**An in-progress status means work, by whoever is doing it.** A human may claim
+`EXECUTING` with `set-status` and finish a slice by hand; that is the ordinary
+way a slice completes after a dispatch died. So abandonment needs evidence of a
+dead *dispatch*, not merely an in-progress status: dispatch takes the slice lock
+before it writes that status, so a document sitting at one with no lock was
+never dispatched into it. `status` reports that as `· owned by hand` rather than
+as a warning, and `reconcile` refuses it — there is no stale lock to release and
+nothing went unrecorded.
+
+**A produced document is born drafting.** `PLAN_DRAFTING` is what the planner is
+told to write into the plan's frontmatter, because it writes that file the
+moment it starts typing and then works on it for the rest of the run. The
+supervisor promotes it to `PLAN_GENERATED` in the same epilogue that writes the
+spec's status. Completion is then a claim by the one component that observed the
+run end — before, a half-written plan and a finished one were byte-identical.
 
 ## The milestone lifecycle
 

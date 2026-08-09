@@ -47,6 +47,7 @@ def run_supervised(
     cwd: Path,
     sandbox_branch: str = "",
     base_ref: str = "",
+    gate_status: str = "",
 ) -> int:
     """Run one agent to completion and record the outcome. Returns its exit code."""
     target_file = Path(target_file)
@@ -58,7 +59,7 @@ def run_supervised(
         exit_code = _run_child(argv, cwd, log_file)
         _record_outcome(
             role, target_file, project_root, exit_code, log_file, sandbox_branch,
-            base_ref,
+            base_ref, gate_status,
         )
         return exit_code
     finally:
@@ -201,8 +202,8 @@ def _unmet_postcondition(
         f"[runner] ERROR: '{role}' exited 0 but left no document the pipeline can "
         f"see: nothing in {directory} carries `slice_id: {slice_id}` with a "
         f"`status:` for the next gate to move. The work may exist and still be "
-        f"invisible — a document with no frontmatter is the usual cause. Recording "
-        f"{FAILED_STATUS} rather than success."
+        f"invisible — a document with no frontmatter is the usual cause. Returning "
+        f"the slice to its gate rather than certifying the run."
     )
 
 
@@ -242,8 +243,8 @@ def _no_commits_on_the_branch(
         return (
             f"[runner] ERROR: '{role}' exited 0 but git could not count commits on "
             f"{branch} since {base_ref[:12]} — the branch may be gone. Nothing "
-            f"observed the work landing, so recording {FAILED_STATUS} rather than "
-            f"certifying it."
+            f"observed the work landing, so returning the slice to its gate rather "
+            f"than certifying it."
         )
     if count > 0:
         return ""
@@ -251,7 +252,63 @@ def _no_commits_on_the_branch(
         f"[runner] ERROR: '{role}' exited 0 but left no commits on {branch} "
         f"since {base_ref[:12]}. That is the branch close-slice merges, so it "
         f"would have nothing to take. If the work exists, it is in another tree. "
-        f"Recording {FAILED_STATUS} rather than success."
+        f"Returning the slice to its gate rather than certifying the run."
+    )
+
+
+def _promote_produced(
+    role: str,
+    agent: dict,
+    target_file: Path,
+    log_file: Path,
+    state_machine: dict,
+) -> str:
+    """Move this run's produced document from drafting to done, or say why not.
+
+    The status a role is told to write into its own output is the one a
+    half-written file carries — it writes the file the moment it starts
+    drafting and then works on it for the rest of the run. So the claim that
+    the document is finished cannot be the role's; it belongs to the component
+    that watched the run end, which is this one.
+
+    Returns "" when there is nothing to do: a role that produces no document,
+    a document `_unmet_postcondition` has already reported missing, or one the
+    role marked finished itself. That last case is disobedience against the
+    prompt and still exactly what the next gate wants — failing a run over it
+    would help nobody.
+    """
+    subdir = agent.get("produces")
+    target_status = agent.get("success_status")
+    if not subdir or not target_status:
+        return ""
+
+    frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+    slice_id = frontmatter.get("slice_id", target_file.stem)
+    try:
+        document = produced.find_document(target_file, subdir, slice_id)
+    except ConfigError as exc:
+        return f"[runner] ERROR: {exc}"
+    if document is None:
+        return ""
+
+    current = parse_frontmatter(document.read_text(encoding="utf-8")).get("status")
+    if current == target_status:
+        return ""
+
+    if update_frontmatter_status(
+        document, target_status,
+        state_machine["valid_statuses"], state_machine["transitions"],
+    ):
+        _log_and_print(log_file, f"[runner] {document.name}: {current} -> {target_status}")
+        return ""
+
+    return (
+        f"[runner] ERROR: '{role}' produced {document.name} at '{current}', which "
+        f"this machine cannot move to '{target_status}'. That status is what the "
+        f"next gate reads, so the document would sit where nothing can advance it "
+        f"— and the natural repair, editing frontmatter by hand, is the one this "
+        f"pipeline forbids. Returning the slice to its gate rather than certifying "
+        f"the run."
     )
 
 
@@ -263,6 +320,7 @@ def _record_outcome(
     log_file: Path,
     sandbox_branch: str = "",
     base_ref: str = "",
+    gate_status: str = "",
 ) -> None:
     """Advance the slice status and fire the completion hook."""
     try:
@@ -276,42 +334,61 @@ def _record_outcome(
         return
 
     state_machine = config["state_machine"]
+    missing = ""
     if exit_code == 0:
         missing = _unmet_postcondition(
             role, agent, target_file, log_file, project_root, base_ref
         )
+        if not missing:
+            missing = _promote_produced(
+                role, agent, target_file, log_file, state_machine
+            )
         if missing:
             _log_and_print(log_file, missing)
-            new_status = FAILED_STATUS
-            event = f"on_{role}_failed"
-        else:
-            new_status = agent.get("success_status")
-            event = f"on_{role}_complete"
+
+    if exit_code == 0 and not missing:
+        candidates = [agent.get("success_status")]
+        event = f"on_{role}_complete"
     else:
-        new_status = FAILED_STATUS
+        # Back to the gate this dispatch was accepted from — the place the
+        # human left the slice, and the only description of it that stays true
+        # when a run dies. FAILED survives as the fallback for a machine that
+        # declares no edge home: a document stranded at an in-progress status
+        # is worse than one in a state nothing writes any more.
+        candidates = [gate_status, FAILED_STATUS]
         event = f"on_{role}_failed"
+    candidates = [status for status in candidates if status]
 
     status_applied = False
-    if new_status:
-        status_applied = update_frontmatter_status(
+    new_status = candidates[0] if candidates else None
+    for candidate in candidates:
+        if update_frontmatter_status(
             target_file,
-            new_status,
+            candidate,
             state_machine["valid_statuses"],
             state_machine["transitions"],
-        )
-        if not status_applied:
-            _log_and_print(
-                log_file,
-                f"[runner] ERROR: could not set status to '{new_status}' for "
-                f"{target_file} (illegal transition, missing file, or "
-                f"unparsable frontmatter) — the slice's on-disk status was "
-                f"NOT updated and does not reflect this outcome.",
-            )
-    else:
+        ):
+            status_applied = True
+            new_status = candidate
+            break
         _log_and_print(
             log_file,
-            f"[runner] WARNING: agent '{role}' has no success_status configured; "
-            f"the slice's on-disk status was not updated.",
+            f"[runner] ERROR: could not set status to '{candidate}' for "
+            f"{target_file} (illegal transition, missing file, or "
+            f"unparsable frontmatter).",
+        )
+    if candidates and not status_applied:
+        _log_and_print(
+            log_file,
+            f"[runner] ERROR: none of {candidates} could be applied to "
+            f"{target_file} — the slice's on-disk status was NOT updated and "
+            f"does not reflect this outcome.",
+        )
+    if not candidates:
+        _log_and_print(
+            log_file,
+            f"[runner] WARNING: agent '{role}' declares no status for this "
+            f"outcome; the slice's on-disk status was not updated.",
         )
 
     # Only claim the transition happened if it actually did — the ERROR/
@@ -355,6 +432,11 @@ def main(argv=None) -> int:
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--sandbox-branch", default="")
     parser.add_argument("--base-ref", default="")
+    parser.add_argument(
+        "--gate-status", default="",
+        help="The status the document sat at when the dispatch was accepted; "
+             "where a failed run puts it back.",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
@@ -374,6 +456,7 @@ def main(argv=None) -> int:
         cwd=Path(args.cwd),
         sandbox_branch=args.sandbox_branch,
         base_ref=args.base_ref,
+        gate_status=args.gate_status,
     )
 
 

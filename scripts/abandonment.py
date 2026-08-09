@@ -107,18 +107,57 @@ def is_abandoned(
     *,
     is_alive=_is_process_alive,
 ) -> bool:
-    """True when the document claims in-progress work no live supervisor owns.
+    """True when a dispatch against this document was made and then died.
+
+    Abandonment needs evidence of a dead dispatch, and the lock is that
+    evidence. Dispatch acquires it *before* it writes the in-progress status,
+    so a document sitting at one with no lock at all was never dispatched into
+    it — a human claimed it, which is a legal way for work to be in progress.
+    Reading an absent lock as abandonment convicted every hand-driven slice and
+    told the operator to `reconcile` work that was going perfectly well.
 
     A `starting` lock inside its grace window counts as owned: dispatch sets
     the in-progress status before the supervisor exists, and that gap is not
-    abandonment.
+    abandonment either.
     """
     if status not in in_progress:
         return False
     lock_file = lock_path(project_root, slice_id)
     if not lock_file.exists():
-        return True
+        return False
     return not _lock_is_held(_read_lock(lock_file), is_alive=is_alive)
+
+
+def is_hand_owned(
+    status: str, slice_id: str, project_root: Path, in_progress: set[str]
+) -> bool:
+    """True when work is in progress with no dispatch behind it.
+
+    The complement of `is_abandoned` within the in-progress statuses, and the
+    other half of what an in-progress status now means. Worth naming rather
+    than leaving as "not abandoned": the report says something different about
+    each, and only one of them is a defect.
+    """
+    return status in in_progress and not lock_path(project_root, slice_id).exists()
+
+
+def gate_for_in_progress(config: dict, status: str) -> str:
+    """The gate a role at `status` was dispatched from, or "" when not unique.
+
+    What a failed or abandoned dispatch returns its document to. Derived from
+    the role's own `allowed_statuses` rather than hardcoded, for the same
+    reason `in_progress_statuses` is: the names belong to the project. A role
+    that may be dispatched from either of two gates leaves no single place to
+    return to, and guessing there would rewrite history — the caller falls back
+    to something it can defend.
+    """
+    gates = {
+        gate
+        for agent in (config.get("agents") or {}).values()
+        if agent.get("in_progress_status") == status
+        for gate in (agent.get("allowed_statuses") or [])
+    }
+    return gates.pop() if len(gates) == 1 else ""
 
 
 def describe_lock(lock_file: Path, data: dict | None, held: bool) -> str:

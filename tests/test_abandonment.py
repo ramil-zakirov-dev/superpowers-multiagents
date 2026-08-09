@@ -49,11 +49,58 @@ def test_dead_supervisor_plus_terminal_status_is_not_abandoned(tmp_path):
     )
 
 
-def test_missing_lock_plus_in_progress_status_is_abandoned(tmp_path):
-    """A slice nothing owns is exactly what a human should be told about."""
-    assert abandonment.is_abandoned(
+def test_no_lock_at_all_is_not_abandonment_but_hand_ownership(tmp_path):
+    """#24: an in-progress status no longer implies a supervisor.
+
+    Dispatch acquires the lock *before* writing the in-progress status, so a
+    document sitting at one with no lock was never dispatched into it — a human
+    claimed it, which is a legal way for work to be in progress. Convicting
+    that as abandonment told every hand-driven slice to run `reconcile`.
+    """
+    assert not abandonment.is_abandoned(
         "PLANNING", "slice-01", tmp_path, IN_PROGRESS, is_alive=ALWAYS_ALIVE
     )
+    assert abandonment.is_hand_owned("PLANNING", "slice-01", tmp_path, IN_PROGRESS)
+
+
+def test_a_dead_dispatch_is_not_hand_owned(tmp_path):
+    """The two readings are exclusive: a lock is the evidence separating them."""
+    _running_lock(tmp_path, pid=1234)
+
+    assert not abandonment.is_hand_owned("EXECUTING", "slice-01", tmp_path, IN_PROGRESS)
+    assert abandonment.is_abandoned(
+        "EXECUTING", "slice-01", tmp_path, IN_PROGRESS, is_alive=ALWAYS_DEAD
+    )
+
+
+def test_a_settled_document_is_neither(tmp_path):
+    assert not abandonment.is_hand_owned(
+        "PLAN_GENERATED", "slice-01", tmp_path, IN_PROGRESS
+    )
+
+
+def test_the_gate_a_role_was_dispatched_from_is_derived_from_its_config(tmp_path):
+    """What a failed or abandoned dispatch returns the document to."""
+    from scripts.config import DEFAULT_CONFIG
+
+    assert abandonment.gate_for_in_progress(DEFAULT_CONFIG, "EXECUTING") == "PLAN_APPROVED"
+    assert abandonment.gate_for_in_progress(DEFAULT_CONFIG, "PLANNING") == "SPEC_APPROVED"
+    assert abandonment.gate_for_in_progress(DEFAULT_CONFIG, "PLAN_GENERATED") == ""
+
+
+def test_an_ambiguous_gate_resolves_to_nothing(tmp_path):
+    """Two gates, no answer: a role that may be dispatched from either leaves
+    no single place to return to, and guessing would rewrite history."""
+    config = {
+        "agents": {
+            "executor": {
+                "in_progress_status": "EXECUTING",
+                "allowed_statuses": ["PLAN_APPROVED", "MERGE_CONFLICT"],
+            }
+        }
+    }
+
+    assert abandonment.gate_for_in_progress(config, "EXECUTING") == ""
 
 
 def test_missing_lock_plus_terminal_status_is_not_abandoned(tmp_path):

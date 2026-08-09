@@ -266,6 +266,15 @@ def cmd_status(args):
                 if abandonment.is_abandoned(label, slice_id, project_root, in_progress):
                     evidence = abandonment.lock_evidence(slice_id, project_root)
                     print(f"{'':23}⚠ abandoned: {evidence}; run `reconcile`")
+                elif abandonment.is_hand_owned(
+                    label, slice_id, project_root, in_progress
+                ):
+                    # Not a warning. An in-progress status names work, and work
+                    # a human is doing themselves is the ordinary way a slice
+                    # gets finished after a dispatch died. Said out loud anyway,
+                    # because "no supervisor" is exactly what the reader would
+                    # otherwise have to assume from the absence of one.
+                    print(f"{'':23}· in progress with no supervisor: owned by hand")
             # The mirror image, one gate later: a status claiming an isolated
             # role succeeded, over a branch carrying nothing it could have
             # succeeded at. The supervisor checks this itself when it lives to
@@ -638,7 +647,15 @@ def cmd_dispatch_agent(args):
         produced_frontmatter = produced.frontmatter_block(
             frontmatter,
             slice_id=slice_id,
-            status=agent_config.get("success_status") or "",
+            # What the document is *born* with, not what it ends at. A role
+            # writes its output file the moment it starts drafting, so a block
+            # carrying the success status has every half-written document
+            # claiming completion. The supervisor promotes it when the run ends.
+            status=(
+                agent_config.get("produced_status")
+                or agent_config.get("success_status")
+                or ""
+            ),
             source_path=prompt_file,
             title_template=agent_config.get("produced_title") or "",
         )
@@ -740,6 +757,11 @@ def cmd_dispatch_agent(args):
         "--cwd", str(cwd),
         "--sandbox-branch", teardown_branch,
         "--base-ref", base_ref,
+        # Where this dispatch was accepted from, and therefore where a run that
+        # dies puts the document back. Recorded here because this is the only
+        # place that knows it: by the time the supervisor's epilogue runs, the
+        # document has been carrying the in-progress status for the whole run.
+        "--gate-status", current_status,
         "--", *[str(part) for part in agent_argv],
     ]
 
@@ -918,14 +940,17 @@ def cmd_summary(args):
 
 
 def cmd_reconcile(args):
-    """Move an abandoned dispatch's document out of its in-progress state.
+    """Return an abandoned dispatch's document to the gate it started from.
 
-    Legal only when the document sits at some role's in_progress_status AND
-    no live supervisor owns the slice. Moves it to FAILED — the one status
-    that describes the *dispatch* truthfully: nobody recorded an outcome.
-    What FAILED deliberately does not say is anything about the *work*;
-    judging that is the audit the pipeline already requires before
-    close-slice.
+    Legal only when the document sits at some role's in_progress_status AND a
+    dead dispatch's lock proves a supervisor was there. Both halves matter: an
+    in-progress status with no lock at all is a human at work — nothing went
+    unrecorded, and moving the status would take the slice out of their hands.
+
+    The gate is where the human left the slice, which is the description that
+    stays true when a run dies. It says nothing about the *work* the dead run
+    may have landed; judging that is the audit the pipeline already requires
+    before close-slice.
     """
     filepath = Path(args.file).resolve()
     if not filepath.is_file():
@@ -963,12 +988,29 @@ def cmd_reconcile(args):
         )
         sys.exit(1)
 
+    if abandonment.is_hand_owned(current_status, slice_id, project_root, in_progress):
+        print(
+            f"Error: no dispatch ever owned slice '{slice_id}' at "
+            f"'{current_status}' — there is no lock, so nothing went unrecorded "
+            f"and there is no stale lock to release."
+        )
+        print(
+            "   An in-progress status with no supervisor is a human at work. "
+            "Move it yourself with `set-status` when the work is done."
+        )
+        sys.exit(1)
+
     if not abandonment.is_abandoned(current_status, slice_id, project_root, in_progress):
         print(
             f"Error: a live supervisor owns slice '{slice_id}'. Reconciling a "
             f"running dispatch would race its epilogue — let it finish."
         )
         sys.exit(1)
+
+    # Where the dispatch was accepted from, and so where the slice goes back to.
+    # An ambiguous role — two gates, no single origin — falls back to FAILED,
+    # which claims less: that the dispatch went unrecorded, and nothing more.
+    target_status = abandonment.gate_for_in_progress(config, current_status) or "FAILED"
 
     evidence = abandonment.lock_evidence(slice_id, project_root)
     print(f"Slice '{slice_id}' is abandoned:")
@@ -977,8 +1019,8 @@ def cmd_reconcile(args):
 
     if not getattr(args, "yes", False):
         print(
-            f"Refusing to mark {filepath.name} FAILED without --yes. Audit the "
-            f"work itself first — FAILED records that the dispatch went "
+            f"Refusing to move {filepath.name} to {target_status} without --yes. "
+            f"Audit the work itself first — this records that the dispatch went "
             f"unrecorded, not that the work is bad — then re-run with --yes."
         )
         sys.exit(2)
@@ -986,17 +1028,22 @@ def cmd_reconcile(args):
     valid_statuses, transitions = milestone_mod.machine_for(
         milestone_mod.SLICE_KIND, config
     )
-    if not update_frontmatter_status(filepath, "FAILED", valid_statuses, transitions):
+    if not update_frontmatter_status(
+        filepath, target_status, valid_statuses, transitions
+    ):
         print(
             f"Error: could not move '{slice_id}' from '{current_status}' to "
-            f"FAILED. The stale lock was kept; if this role's machine declares "
-            f"no transition to FAILED, add one in .superpowers/agents.yaml."
+            f"{target_status}. The stale lock was kept; if this role's machine "
+            f"declares no such transition, add one in .superpowers/agents.yaml."
         )
         sys.exit(1)
 
     release_slice_lock(slice_id, project_root)
     print(f"Released the stale lock for '{slice_id}'.")
-    print("Re-enter the pipeline from FAILED via SPEC_APPROVED or PLAN_APPROVED.")
+    print(
+        f"'{slice_id}' is back at {target_status}: re-dispatch it, or finish the "
+        f"work by hand and move it on with `set-status`."
+    )
 
 
 def _report_wait_result(slice_id: str, document: Path, project_root: Path, result) -> int:

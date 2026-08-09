@@ -38,7 +38,8 @@ Each agent can independently configure:
 - **`model`**: Specific model identifier
 - **`allowed_statuses`**: State preconditions for dispatch
 - **`in_progress_status`**: Status to set before launching the agent
-- **`success_status`**: Status the orchestrator sets when the agent exits `0` (on non-zero exit, the orchestrator sets `FAILED` instead)
+- **`success_status`**: Status the orchestrator sets when the agent exits `0` (on any failure it writes back the status the dispatch was accepted from)
+- **`produced_status`**: Status the role's own output document is *born* with, promoted to `success_status` by the supervisor's epilogue
 - **`isolated_worktree`**: Whether to run in an isolated git worktree
 - **`prompt_template`**: Task prompt with `{file}` placeholder
 - **`extra_args`**: Additional CLI flags
@@ -52,8 +53,8 @@ The **state machine** (statuses and transitions) is also configurable via the `s
 
 1. **Agent 1 (Fable 5 - Claude Desktop):** Milestone & Track Architect. Designs system boundaries, domain models, and defines Tracks (`track-N`) containing Vertical Slices (`slice-N`) inside `docs/superpowers/milestones/YYYY-MM-DD-milestone-N.md`.
 2. **Agent 2 (Opus 5 - Claude Desktop):** Vertical Slice Architect & Auditor. Selects a Track, designs `docs/superpowers/specs/YYYY-MM-DD-slice-N-design.md` with Code Anchors & Contracts. Presents spec to user (`SPEC_APPROVED`). Audits plans (`PLAN_APPROVED`) and code diffs (`VERIFIED_CLOSED`).
-3. **Agent 3 (Kimi K3 - OpenCode CLI, configurable):** Implementation Planner. Triggered when status is `SPEC_APPROVED`. Uses `writing-plans` skill to generate `docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md`. The orchestrator sets status to `PLAN_GENERATED` (on exit 0) or `FAILED` (on exit !=0) from the planner's exit code.
-4. **Agent 4 (Minimax M3 - OpenCode CLI, configurable):** TDD Executor. Triggered when status is `PLAN_APPROVED`. Uses the `subagent-driven-development` skill to execute the plan task by task. The orchestrator sets status to `EXECUTION_COMPLETE` (on exit 0) or `FAILED` (on exit !=0) from the executor's exit code — the exit code reports that the process ended, not that the plan is finished, so an agent that halts on a blocker still lands in `EXECUTION_COMPLETE`. The `VERIFIED_CLOSED` audit is what catches that.
+3. **Agent 3 (Kimi K3 - OpenCode CLI, configurable):** Implementation Planner. Triggered when status is `SPEC_APPROVED`. Uses `writing-plans` skill to generate `docs/superpowers/plans/YYYY-MM-DD-slice-N-plan.md`. The orchestrator sets the spec's status to `PLAN_GENERATED` (on exit 0) or back to `SPEC_APPROVED` (on failure) from the planner's exit code, and promotes the plan itself from `PLAN_DRAFTING` to `PLAN_GENERATED` in the same epilogue.
+4. **Agent 4 (Minimax M3 - OpenCode CLI, configurable):** TDD Executor. Triggered when status is `PLAN_APPROVED`. Uses the `subagent-driven-development` skill to execute the plan task by task. The orchestrator sets status to `EXECUTION_COMPLETE` (on exit 0) or back to `PLAN_APPROVED` (on failure) from the executor's exit code — the exit code reports that the process ended, not that the plan is finished, so an agent that halts on a blocker still lands in `EXECUTION_COMPLETE`. The `VERIFIED_CLOSED` audit is what catches that.
 
 ---
 
@@ -61,9 +62,26 @@ The **state machine** (statuses and transitions) is also configurable via the `s
 
 ```
 DRAFT_SPEC ➔ SPEC_APPROVED (Human Gate) ➔ PLANNING ➔ PLAN_GENERATED ➔ PLAN_APPROVED (Opus 5 Audit) ➔ EXECUTING ➔ EXECUTION_COMPLETE ➔ VERIFIED_CLOSED (Opus 5 Audit)
-                                                                                        ↘ MERGE_CONFLICT ↗
-                                                                     ↘ FAILED (orchestrator exit !=0) ↗
+                                              |                                          |               ↘ MERGE_CONFLICT ↗
+                                              ↘ back to SPEC_APPROVED (the run died)      ↘ back to PLAN_APPROVED (the run died)
 ```
+
+**A status names where the work stands, never who is running.** Three
+consequences you will meet:
+
+- **A dispatch that dies returns the document to its gate**, not to `FAILED`.
+  Nothing writes `FAILED` any more. What happened to the run is in the log; the
+  status says the work is back where you left it, with whatever the partial run
+  landed still on disk.
+- **An in-progress status means work, by whoever is doing it.** Claim
+  `EXECUTING` with `set-status` and finish a slice by hand — that is the
+  ordinary route after a dispatch died, and the reason there is no re-dispatch
+  in it. `status` marks such a document `· owned by hand`; only a *dead
+  dispatch* (an in-progress status behind a stale lock) is reported as abandoned
+  and answered with `reconcile`.
+- **A plan is born `PLAN_DRAFTING`.** The planner writes the file the moment it
+  starts typing, so `PLAN_GENERATED` is written by the supervisor's epilogue —
+  it is a claim about completion, and only the epilogue watched the run end.
 
 **State transition rules are strictly enforced.** The orchestrator rejects invalid jumps (e.g. `DRAFT_SPEC` → `VERIFIED_CLOSED`). Custom statuses and transitions can be defined in `.superpowers/agents.yaml`.
 
@@ -174,7 +192,7 @@ keystroke is the goal; automating the judgement would dissolve the gate.
 | The brief is written | Human approves | `/superpowers-multiagents:activate-milestone <brief>` |
 | A slice spec is drafted | Human approves | `/superpowers-multiagents:approve-spec <spec>` |
 | Spec approved | Observable | `/superpowers-multiagents:dispatch planner <spec>` |
-| Planner exited 0 | Observable | (the supervisor sets `PLAN_GENERATED`) |
+| Planner exited 0 | Observable | (the supervisor sets `PLAN_GENERATED` on both the spec and the plan) |
 | The plan is audited | Human approves | `/superpowers-multiagents:approve-plan <plan>` |
 | Plan approved | Observable | `/superpowers-multiagents:dispatch executor <plan>` |
 | Executor exited 0 | Observable | (the supervisor sets `EXECUTION_COMPLETE`) |
@@ -185,6 +203,12 @@ keystroke is the goal; automating the judgement would dissolve the gate.
 `EXECUTION_COMPLETE` means the executor's process ended cleanly, not that the
 plan is finished — read the plan's unchecked task boxes before approving
 `VERIFIED_CLOSED`.
+
+A dispatch that failed leaves the document at its gate, and the procedure has no
+row for what comes next on purpose: re-dispatching and finishing the work
+yourself are both legal from there, and which one is right is a judgement about
+what the dead run left behind. If you finish it yourself, `set-status
+--status <in_progress_status>` first, so the document says work is happening.
 
 ### The command surface
 

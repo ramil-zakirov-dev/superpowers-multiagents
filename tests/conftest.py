@@ -35,13 +35,17 @@ class StubAdapter(HarnessAdapter):
 #: What a successful planner does, now that exiting 0 is not enough: it leaves a
 #: plan the state machine can read. Imported by name (`python -c "import
 #: stub_agent"`) so the agents.yaml value stays a plain YAML scalar.
+#: `PLAN_DRAFTING`, not `PLAN_GENERATED`: that is what the dispatch prompt now
+#: tells a planner to write, and the supervisor's epilogue promotes it. A stub
+#: that wrote the finished status would model a disobedient agent and hide the
+#: promotion entirely.
 STUB_AGENT = '''
 import pathlib
 
 plans = pathlib.Path("docs/superpowers/plans")
 plans.mkdir(parents=True, exist_ok=True)
 (plans / "2026-07-26-slice-01-demo-plan.md").write_text(
-    \'---\\nslice_id: "slice-01-demo"\\nstatus: PLAN_GENERATED\\n---\\n\\n# Demo Plan\\n\',
+    \'---\\nslice_id: "slice-01-demo"\\nstatus: PLAN_DRAFTING\\n---\\n\\n# Demo Plan\\n\',
     encoding="utf-8",
 )
 print("stub ok")
