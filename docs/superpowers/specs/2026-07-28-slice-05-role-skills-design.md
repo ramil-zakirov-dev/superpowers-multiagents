@@ -50,8 +50,8 @@ the real `opencode` binary on this machine, not inferred from documentation.
 ### 2.2 Out
 
 - **The architect side.** No project-level list for the human-facing session.
-  Evidence against it: eight skills vendored into `akbars-insec-agent` at
-  `18b5900` became available to the Claude Code session immediately, with zero
+  Evidence against it: eight skills vendored into a consuming repo became
+  available to the Claude Code session immediately, with zero
   configuration, because the harness discovers `.claude/skills/` by directory.
   A config key would add no availability, and as attention-direction it would
   only add prose to `SKILL.md` asking the model to read a YAML file and comply —
