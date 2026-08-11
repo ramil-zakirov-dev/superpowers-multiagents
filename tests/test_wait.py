@@ -373,12 +373,53 @@ def test_cmd_wait_until_success_keeps_waiting_on_a_failed_slice(document, capsys
     assert "FAILED" in capsys.readouterr().out
 
 
-def test_cmd_wait_without_the_flag_reports_a_failed_slice_as_before(document, capsys):
+def test_cmd_wait_without_the_flag_reports_a_failed_slice_as_a_failure(
+    document, capsys
+):
+    """This asserted exit 0 until slice 08, and the name said "as before".
+
+    Before was wrong. `0` and "the wait ended" were the same code, so the
+    caller that backgrounds this — the only caller the flag exists for — got
+    the same signal whether the plan was ready or the run had died and put the
+    slice back at its gate.
+    """
     root, doc = document
     _set_status(doc, "FAILED")
 
     with pytest.raises(SystemExit) as excinfo:
         cmd_wait(_args(root / "docs" / "superpowers"))
 
-    assert excinfo.value.code == 0
+    assert excinfo.value.code == 4
     assert "FAILED" in capsys.readouterr().out
+
+
+def test_cmd_wait_reports_a_gate_return_as_a_failure_too(document, capsys):
+    """The 2026-08-09 run, reduced.
+
+    A dispatch that ends at its gate is the shape 2.17.0 introduced, and it is
+    the one most easily mistaken for success: the status is a perfectly
+    ordinary one that a human might also have set on purpose. Nothing will
+    move it on its own, which is what the exit code has to convey.
+    """
+    root, doc = document
+    _set_status(doc, "PLAN_APPROVED")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers"))
+
+    assert excinfo.value.code == 4
+    out = capsys.readouterr().out
+    assert "PLAN_APPROVED" in out
+    assert "success" in out, "the line must say what did not happen"
+
+
+def test_cmd_wait_still_exits_0_only_for_a_role_success_status(document, capsys):
+    """The other half: narrowing 0 must not have narrowed it to nothing."""
+    root, doc = document
+    _set_status(doc, "EXECUTION_COMPLETE")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_wait(_args(root / "docs" / "superpowers"))
+
+    assert excinfo.value.code == 0
+    assert "EXECUTION_COMPLETE" in capsys.readouterr().out

@@ -376,10 +376,13 @@ def test_dispatch_wait_blocks_until_the_supervisor_reports(tmp_project, demo_spe
     with pytest.raises(SystemExit) as excinfo:
         cmd_dispatch_agent(args)
 
-    assert excinfo.value.code == 0
-    # The slow agent produces no plan, so runner._unmet_postcondition sends
-    # the spec back to the gate it was dispatched from. --wait correctly
-    # observed the dispatch ending and returned exit 0.
+    # The slow agent produces no plan, so runner._unmet_postcondition sends the
+    # spec back to the gate it was dispatched from. This asserted exit 0 until
+    # slice 08, with a comment calling that correct because the dispatch had
+    # indeed ended — which is the whole of #26: "it ended" and "it worked" were
+    # one code, and a caller acting on this result would have gone on to
+    # approve a plan that does not exist.
+    assert excinfo.value.code == 4
     assert (
         parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
         == "SPEC_APPROVED"

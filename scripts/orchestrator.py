@@ -176,8 +176,9 @@ def _docs_base(given, *, must_exist: bool = True, exit_code: int = 1) -> Path:
     The refusal is the point: a report that cannot find the pipeline must say
     so rather than print `(none)` three times and exit 0.
 
-    `exit_code` is not decoration. `wait` publishes a contract — 0 finished,
-    2 abandoned, 1 timed out, 3 could not start — and an unresolvable
+    `exit_code` is not decoration. `wait` publishes a contract — 0 reached a
+    success status, 4 ended without one, 2 abandoned, 1 timed out, 3 could
+    not start — and an unresolvable
     directory is squarely "could not start". Exiting 1 there would tell a
     caller its dispatch is still running, which is the same conflation of
     "I could not look" with a real outcome that the rest of this module
@@ -806,7 +807,11 @@ def cmd_dispatch_agent(args):
             until=(abandonment.success_statuses(config)
                    if getattr(args, "until_success", False) else None),
         )
-        sys.exit(_report_wait_result(slice_id, target_file, project_root, result))
+        sys.exit(
+            _report_wait_result(
+                slice_id, target_file, project_root, result, config
+            )
+        )
 
 
 def _quote_posix(value: str) -> str:
@@ -1145,20 +1150,40 @@ def cmd_reconcile(args):
     )
 
 
-def _report_wait_result(slice_id: str, document: Path, project_root: Path, result) -> int:
+def _report_wait_result(
+    slice_id: str, document: Path, project_root: Path, result, config: dict
+) -> int:
     """Print the last line and return the exit code.
 
     The last line names the terminal status, the elapsed time and the log
     path, so the caller needs no second command. The abandoned branch names
     `reconcile` rather than leaving the operator to look it up.
+
+    `0` means the slice reached a status some role calls success — not merely
+    that the wait ended. Those were the same code until this slice, and the
+    caller this flag exists for, the one that backgrounds the wait and acts on
+    its result, could not tell "the plan is ready" from "the run died and the
+    slice went back to its gate". Both printed a line and exited 0. Deciding
+    from the text is not a contract.
     """
     log = abandonment.latest_log(project_root, slice_id) or "(no log found)"
     if result.outcome == abandonment.OUTCOME_TERMINAL:
+        if result.status in abandonment.success_statuses(config):
+            print(
+                f"Slice '{slice_id}' reached '{result.status}' after "
+                f"{result.elapsed:.0f}s. Log: {log}"
+            )
+            return 0
         print(
-            f"Slice '{slice_id}' reached '{result.status}' after "
-            f"{result.elapsed:.0f}s. Log: {log}"
+            f"Slice '{slice_id}' ended at '{result.status}' after "
+            f"{result.elapsed:.0f}s without reaching a success status. "
+            f"Log: {log}"
         )
-        return 0
+        print(
+            "   Nothing further will move it on its own: read the log, then "
+            "either repair and re-dispatch, or take the work by hand."
+        )
+        return 4
     if result.outcome == abandonment.OUTCOME_ABANDONED:
         # The grounds are the ones the verdict was reached on, not a fresh
         # lookup: re-deriving them here once produced "is abandoned ... pid
@@ -1233,7 +1258,7 @@ def cmd_wait(args):
         until=(abandonment.success_statuses(config)
                if getattr(args, "until_success", False) else None),
     )
-    sys.exit(_report_wait_result(slice_id, document, project_root, result))
+    sys.exit(_report_wait_result(slice_id, document, project_root, result, config))
 
 
 def cmd_milestone(args):
@@ -1363,7 +1388,7 @@ def main():
     p_agent.add_argument(
         "--wait", action="store_true",
         help="Block until the dispatch ends, then exit with its outcome "
-             "(0 finished, 2 abandoned, 1 timeout)",
+             "(0 reached a success status, 4 ended without one, 2 abandoned, 1 timeout)",
     )
     p_agent.add_argument(
         "--until-success", action="store_true",
@@ -1382,7 +1407,7 @@ def main():
     p_plan.add_argument(
         "--wait", action="store_true",
         help="Block until the dispatch ends, then exit with its outcome "
-             "(0 finished, 2 abandoned, 1 timeout)",
+             "(0 reached a success status, 4 ended without one, 2 abandoned, 1 timeout)",
     )
     p_plan.add_argument(
         "--until-success", action="store_true",
@@ -1401,7 +1426,7 @@ def main():
     p_exec.add_argument(
         "--wait", action="store_true",
         help="Block until the dispatch ends, then exit with its outcome "
-             "(0 finished, 2 abandoned, 1 timeout)",
+             "(0 reached a success status, 4 ended without one, 2 abandoned, 1 timeout)",
     )
     p_exec.add_argument(
         "--until-success", action="store_true",
@@ -1453,7 +1478,8 @@ def main():
     p_wait = subparsers.add_parser(
         "wait",
         help="Block until a slice's dispatch ends "
-             "(exit 0 finished, 2 abandoned, 1 timeout, 3 cannot start)",
+             "(exit 0 reached a success status, 4 ended without one, "
+             "2 abandoned, 1 timeout, 3 cannot start)",
     )
     # Not required, and not mutually exclusive by accident: `--file` is the
     # unambiguous form (a slice has two documents with one slice_id), `--slice`

@@ -145,7 +145,7 @@ def test_the_verdict_carries_the_evidence_it_was_decided_on(document, capsys):
         abandonment.OUTCOME_ABANDONED, "PLANNING", 30.0,
         evidence="lock names supervisor pid 22776, which is not alive",
     )
-    code = _report_wait_result("slice-01", doc, root, result)
+    code = _report_wait_result("slice-01", doc, root, result, DEFAULT_CONFIG)
 
     out = capsys.readouterr().out
     assert code == 2
