@@ -946,6 +946,98 @@ def cmd_summary(args):
     print("\n".join(lines[-50:]))
 
 
+def cmd_certify(args):
+    """Record that a human read a produced document and found it complete.
+
+    The one claim a supervisor cannot make on anyone's behalf once it is gone.
+    A produced document is born drafting — the agent writes the file as it
+    starts typing — so "this is finished" is a statement about the writer
+    having stopped, and the exit code was only ever a correlate of that. When
+    the run dies with the document written, the correlate is lost and the
+    document sits at a status whose single edge nothing can travel.
+
+    This is not the `EXECUTION_COMPLETE` argument in reverse. That status
+    asserts something about the world — the tests pass, the plan is
+    implemented — which a third party can check and the party being asked has
+    reason to overstate; reserving it guards against a lie. This one asserts
+    only that writing stopped, and the human reading the document is a
+    strictly better instrument for it than a process signal. `approve-plan`,
+    where quality is actually judged, is untouched and still comes after.
+    """
+    filepath = Path(args.file).resolve()
+    if not filepath.is_file():
+        print(f"Error: --file '{filepath}' is not a file.")
+        sys.exit(1)
+
+    project_root = (
+        Path(args.dir).resolve() if getattr(args, "dir", "")
+        else find_project_root(filepath)
+    )
+
+    try:
+        config = load_agent_config(project_root)
+        validate_config(config)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
+    slice_id = frontmatter.get("slice_id", filepath.stem)
+    current_status = frontmatter.get("status", "UNKNOWN")
+    certifiable = abandonment.certifiable_statuses(config)
+
+    if current_status not in certifiable:
+        print(
+            f"Error: {filepath.name} is at '{current_status}', which no role "
+            f"produces. Certifying answers one question — did the writer "
+            f"finish — and only a drafting status asks it "
+            f"({sorted(certifiable) or 'none configured'})."
+        )
+        print(
+            "   For anything else the tool is `set-status`, or the gate that "
+            "owns that step."
+        )
+        sys.exit(1)
+
+    # A running supervisor will promote this itself when the run ends, from
+    # evidence this command does not have. Worse, its verdict may be `gate`,
+    # and then the plan would say generated for a run recorded as producing
+    # nothing.
+    if not abandonment.is_abandoned(
+        current_status, slice_id, project_root,
+        {current_status},          # treat the drafting status as in-flight
+    ):
+        lock = lock_path(project_root, slice_id)
+        if lock.is_file():
+            print(
+                f"Error: a live supervisor owns slice '{slice_id}'. It will "
+                f"record the outcome itself when the run ends — certifying "
+                f"underneath it would race a verdict formed from evidence "
+                f"this command cannot see."
+            )
+            sys.exit(1)
+
+    target_status = certifiable[current_status]
+    valid_statuses, transitions = milestone_mod.machine_for(
+        milestone_mod.SLICE_KIND, config
+    )
+    if not update_frontmatter_status(
+        filepath, target_status, valid_statuses, transitions
+    ):
+        print(
+            f"Error: could not move {filepath.name} from '{current_status}' to "
+            f"'{target_status}'; this project's machine declares no such edge."
+        )
+        sys.exit(1)
+
+    release_slice_lock(slice_id, project_root)
+    print(f"Certified {filepath.name}: {current_status} -> {target_status}.")
+    print(
+        "   That records only that the document is finished. Whether it is "
+        "any good is still the next gate's question."
+    )
+
+
 def cmd_reconcile(args):
     """Return an abandoned dispatch's document to the gate it started from.
 
@@ -1343,6 +1435,20 @@ def main():
         "--yes", action="store_true", help="Apply the move to FAILED"
     )
 
+    # certify
+    p_certify = subparsers.add_parser(
+        "certify",
+        help="Record that you read a produced document and it is complete "
+             "(the claim a dead supervisor can no longer make)",
+    )
+    p_certify.add_argument(
+        "--file", required=True, help="Path to the produced document"
+    )
+    p_certify.add_argument(
+        *PROJECT_ROOT_FLAGS, dest="dir", default="",
+        help="Project root (default: derived from --file)",
+    )
+
     # wait
     p_wait = subparsers.add_parser(
         "wait",
@@ -1434,6 +1540,8 @@ def main():
         cmd_summary(args)
     elif args.command == "reconcile":
         cmd_reconcile(args)
+    elif args.command == "certify":
+        cmd_certify(args)
     elif args.command == "wait":
         cmd_wait(args)
     elif args.command == "sandbox":

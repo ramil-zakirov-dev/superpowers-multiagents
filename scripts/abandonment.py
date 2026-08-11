@@ -56,6 +56,24 @@ def success_statuses(config: dict) -> set[str]:
     } - {None}
 
 
+def certifiable_statuses(config: dict) -> dict:
+    """`{drafting status: the status a human may certify it into}`.
+
+    Read off the roles that write documents rather than naming
+    `PLAN_DRAFTING` here: a project that renames its statuses still gets a way
+    out of a document its supervisor died over. The pair has to come from one
+    role, which is why this returns a mapping and not two sets — certifying is
+    "this specific drafting state is finished", not "advance anything".
+    """
+    return {
+        agent["produced_status"]: agent["success_status"]
+        for agent in (config.get("agents") or {}).values()
+        if isinstance(agent, dict)
+        and agent.get("produced_status")
+        and agent.get("success_status")
+    }
+
+
 def isolated_success_statuses(config: dict) -> set[str]:
     """Every status that claims an isolated role finished successfully.
 
