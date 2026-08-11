@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-08-run-outcome-evidence"
 title: "A run's outcome is judged on evidence, not on the exit code of a process that was only watching"
-status: DRAFT_SPEC
+status: SPEC_APPROVED
 target_version: "2.19.0"
 depends_on: []
 lenses:
