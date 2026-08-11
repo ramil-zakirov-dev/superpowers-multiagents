@@ -24,6 +24,7 @@ import datetime
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 if __package__ in (None, ""):  # invoked as a script rather than `-m`
@@ -38,6 +39,30 @@ from scripts.hooks import canonical_events, run_infrastructure_hook
 from scripts.locks import claim_slice_lock, release_slice_lock_file
 
 FAILED_STATUS = "FAILED"
+
+#: The three answers a run can get. `UNKNOWN` is an outcome, not an error: it
+#: is what the runner says when the process it was watching died over a
+#: workspace that kept changing, and it deliberately writes nothing.
+VERDICT_SUCCESS = "success"
+VERDICT_GATE = "gate"
+VERDICT_UNKNOWN = "unknown"
+
+#: How long a workspace must show no change before a dead client is taken to
+#: mean a dead agent. Generous on purpose: concluding "gone" too early is the
+#: expensive mistake, because that is the one that sweeps a live agent's stack.
+#:
+#: It is paid on every failed dispatch, and that is the visible cost of this
+#: design: a run that really died now takes this long to say so. Lower it and
+#: the risk returned is not "a slower report" but "a stack reclaimed from an
+#: agent that was only thinking".
+DEFAULT_SETTLE_WINDOW_SECONDS = 300
+
+#: How long the runner will watch a workspace that keeps changing before
+#: answering `UNKNOWN` anyway. Stops the supervisor becoming the thing that
+#: never ends.
+DEFAULT_OBSERVATION_DEADLINE_SECONDS = 1800
+
+_POLL_SECONDS = 5.0
 
 #: Opens each run's section of the log. The log path is derived from the role
 #: and the document, so every re-dispatch of a slice lands on the same file and
@@ -320,6 +345,139 @@ def _promote_produced(
     )
 
 
+def _windows(config: dict) -> tuple:
+    """The settle window and observation deadline, in seconds."""
+    machine = config.get("state_machine") or {}
+    return (
+        machine.get("settle_window_seconds", DEFAULT_SETTLE_WINDOW_SECONDS),
+        machine.get(
+            "observation_deadline_seconds", DEFAULT_OBSERVATION_DEADLINE_SECONDS
+        ),
+    )
+
+
+def _slice_id_of(target_file: Path) -> str:
+    frontmatter = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+    return frontmatter.get("slice_id", target_file.stem)
+
+
+def _newest_change(root: Path) -> float:
+    """The newest mtime anywhere under `root`, or 0.0 for an unreadable tree.
+
+    Walks rather than stats the root. A directory's mtime does not reliably
+    change when a file inside it is rewritten — on Windows it usually does not
+    — so the root alone reports a busy worktree as quiet, which is the one
+    error this function must not make.
+    """
+    newest = 0.0
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            try:
+                stamp = os.stat(os.path.join(dirpath, name)).st_mtime
+            except OSError:
+                continue          # vanished mid-walk: the tree is alive, if anything
+            if stamp > newest:
+                newest = stamp
+    return newest
+
+
+def _workspace_keeps_changing(
+    workspace: Path, settle_window: float, deadline: float, log_file: Path
+) -> bool:
+    """Watch a workspace until it settles or the deadline runs out.
+
+    Returns True when it was still changing at the deadline — the agent is
+    working and the client's death said nothing about it. False when it went
+    quiet for the whole settle window, which is as close to "the agent is
+    gone" as an observer outside the harness can get.
+    """
+    mark = _newest_change(workspace)
+    started = time.monotonic()
+    last_change = started
+    while True:
+        elapsed = time.monotonic() - started
+        if elapsed >= deadline:
+            _log_and_print(
+                log_file,
+                f"[runner] {workspace.name} was still changing after "
+                f"{elapsed:.0f}s of watching; giving up on a verdict rather "
+                f"than inventing one.",
+            )
+            return True
+        time.sleep(min(_POLL_SECONDS, deadline - elapsed))
+        newest = _newest_change(workspace)
+        if newest > mark:
+            mark = newest
+            last_change = time.monotonic()
+        elif time.monotonic() - last_change >= settle_window:
+            return False
+
+
+def _fate_of_a_dead_client(
+    role: str,
+    agent: dict,
+    target_file: Path,
+    project_root: Path,
+    log_file: Path,
+    config: dict,
+) -> str:
+    """`VERDICT_GATE` or `VERDICT_UNKNOWN` for a run whose watcher died.
+
+    Two shapes, because the two kinds of artifact fail differently.
+
+    A **producing** role leaves a document, and a document that exists proves
+    only that writing began (#21). So the client's death over one is exactly
+    the case nobody can settle from outside: the document is there, it may be
+    whole, and the only instrument able to tell is a human reading it. That is
+    `certify`. With no document at all there is nothing to read and nothing to
+    wonder about, so the slice goes back to its gate.
+
+    An **isolated** role leaves commits, and it has already been asked for
+    them by the time this runs. What is left to ask is whether more are
+    coming, and only watching answers that.
+
+    A cleanliness shortcut was tried here — a worktree straight from
+    `git worktree add` is clean, so a clean one would settle the question for
+    free — and it is wrong. It is read milliseconds after the client died, and
+    an agent that is alive but has not written yet is indistinguishable from
+    one that never will. The shortcut fires exactly in the window where being
+    wrong sweeps a live agent's stack, which is the harm this whole function
+    exists to prevent. The price of dropping it is that an ordinary failed
+    dispatch takes a settle window to report; that is latency, and latency is
+    the cheap side of this trade.
+    """
+    if agent.get("produces"):
+        slice_id = _slice_id_of(target_file)
+        try:
+            document = produced.find_document(
+                target_file, agent["produces"], slice_id
+            )
+        except ConfigError:
+            return VERDICT_GATE
+        if document is None:
+            return VERDICT_GATE
+        _log_and_print(
+            log_file,
+            f"[runner] '{role}' left {document.name}, and a document that "
+            f"exists proves only that writing began. Nothing outside the "
+            f"harness can tell a finished one from an abandoned one — read it "
+            f"and run `certify --file {document.name}` if it is complete.",
+        )
+        return VERDICT_UNKNOWN
+
+    if not agent.get("isolated_worktree"):
+        return VERDICT_GATE
+
+    workspace = Path(project_root) / ".worktrees" / _slice_id_of(target_file)
+    if not workspace.is_dir():
+        return VERDICT_GATE
+
+    settle_window, deadline = _windows(config)
+    if _workspace_keeps_changing(workspace, settle_window, deadline, log_file):
+        return VERDICT_UNKNOWN
+    return VERDICT_GATE
+
+
 def _record_outcome(
     role: str,
     target_file: Path,
@@ -371,6 +529,31 @@ def _record_outcome(
             _log_and_print(log_file, missing)
 
     if examined and not missing:
+        verdict = VERDICT_SUCCESS
+    elif exit_code == 0:
+        # It ended on its own terms and left nothing. Nobody is still working;
+        # there is nothing to observe and nothing to wait for.
+        verdict = VERDICT_GATE
+    else:
+        verdict = _fate_of_a_dead_client(
+            role, agent, target_file, project_root, log_file, config
+        )
+
+    if verdict == VERDICT_UNKNOWN:
+        # Everything below writes something down. None of it may run on an
+        # answer nobody has: not the status, not the completion hook, and
+        # above all not the teardown, which would reclaim a stack the agent
+        # may still be using. The lock stays held until run_supervised's
+        # `finally`, which is the other half of not inviting a re-dispatch.
+        _log_and_print(
+            log_file,
+            f"[runner] {role} exited {exit_code}, but the run's fate was not "
+            f"observed; status left at its current value and nothing torn "
+            f"down. log: {log_file}",
+        )
+        return
+
+    if verdict == VERDICT_SUCCESS:
         candidates = [agent.get("success_status")]
         event = f"on_{role}_complete"
     else:
@@ -433,7 +616,11 @@ def _record_outcome(
         # hook must not overwrite it.
         _log_and_print(log_file, f"[runner] completion hook failed: {exc}")
 
-    if exit_code != 0 and sandbox_branch:
+    # Reclamation hangs off the verdict, never off the exit code. The two
+    # differ in exactly the case that cost a stack: a client that died over an
+    # agent still using it. `VERDICT_UNKNOWN` never reaches here — it returned
+    # above — so this is the settled-failure path only.
+    if verdict == VERDICT_GATE and sandbox_branch:
         mode = (
             ((config.get("sandbox") or {}).get("teardown") or {})
             .get("on_failed", "containers")

@@ -16,6 +16,13 @@ sandbox:
 state_machine:
   transitions:
     SPEC_APPROVED: ["EXECUTING", "PLANNING", "DRAFT_SPEC"]
+  # A failed run is not declared failed until its workspace has been quiet for
+  # the settle window, so at the shipped 300s default every teardown assertion
+  # below would time out waiting for a verdict the runner is still forming.
+  # These tests are about what a settled failure does, not about how long
+  # settling takes — `test_unknown_outcome.py` owns that question.
+  settle_window_seconds: 0.2
+  observation_deadline_seconds: 5
 agents:
   executor:
     model: "print('stub ok')"
