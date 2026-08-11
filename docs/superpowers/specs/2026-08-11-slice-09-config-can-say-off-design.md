@@ -1,7 +1,7 @@
 ---
 slice_id: "slice-09-config-can-say-off"
 title: "A project can say which roles it does not delegate, and an unspoken gate stops meaning wide open"
-status: SPEC_APPROVED
+status: VERIFIED_CLOSED
 target_version: "2.20.0"
 depends_on: []
 lenses:
