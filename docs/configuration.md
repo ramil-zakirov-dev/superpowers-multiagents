@@ -8,6 +8,43 @@ A partial override in `.superpowers/agents.yaml` **deep-merges** over the defaul
 
 Global `harness.default` and `harness.provider` are inherited by agents that do not set their own `harness` or `provider` fields.
 
+### Removing something the defaults provide
+
+Merging by key means omission cannot subtract. An `agents:` block that names
+only `executor` still resolves a full `planner` from the defaults — at the
+plugin's model, on the plugin's provider — because nothing in the file said
+otherwise.
+
+`null` removes the key, the meaning it has in RFC 7386 JSON Merge Patch:
+
+```yaml
+agents:
+  planner: null      # this project has no planner role
+```
+
+After that, `dispatch planner` refuses and says the role was removed rather
+than implying you mistyped it. `{}` is the opposite spelling and still means
+"this role, all defaults":
+
+```yaml
+agents:
+  planner: {}        # the plugin's planner, unchanged
+```
+
+Any other value there — `planner: kimi-k3`, writing the model where the mapping
+goes — is rejected by name and by type. It used to be reported as five unknown
+keys, because a set built from a string contains its characters.
+
+This is how you hand a level of the hierarchy to a human. The statuses that
+level uses are declared in `state_machine`, not on the role, so they survive
+the removal: a plan written by hand is simply born at `PLAN_GENERATED` and
+`approve-plan` works as before. Nothing else notices — `close-slice` finds
+`plans/` by name, never through a role's `produces`.
+
+Record *why* in a YAML comment. The orchestrator does not carry your reason,
+and does not try to: it needs only to tell a typo from a deliberate absence,
+which it can observe.
+
 ## Full Schema
 
 ```yaml
@@ -107,7 +144,7 @@ sandbox:
 | `model` | string | LLM model identifier (e.g. `kimi-k3`, `minimax-m3`) |
 | `harness` | string | CLI harness name (`opencode`, or custom) |
 | `provider` | string | LLM provider (e.g. `opencode-go`, `anthropic`) |
-| `allowed_statuses` | list | Statuses from which this agent can be dispatched |
+| `allowed_statuses` | list | **Required, non-empty.** Statuses from which this agent can be dispatched. Absent, `null` and `[]` are all rejected at load time — an unspoken gate is not an open one (see [Adding Custom Agents](#adding-custom-agents)) |
 | `in_progress_status` | string | Status to set before launching the agent |
 | `success_status` | string | Status set by the orchestrator when the agent exits 0 |
 | `isolated_worktree` | bool | Whether to run in an isolated git worktree |
@@ -344,7 +381,21 @@ does not exist yet is expected — it renders `not yet specced`.
 
 ## Adding Custom Agents
 
-Add any role to the `agents` section. Declare `success_status` alongside
+Add any role to the `agents` section. Declare `allowed_statuses` — it is the
+entry gate, it is **mandatory**, and a role that omits it is rejected at load
+time. It used to be optional in effect: an absent, `null` or empty list read as
+"this role has no gate", so the role could be dispatched from *any* status,
+`VERIFIED_CLOSED` included and a status another role's supervisor currently
+owned included. All three spellings look like "no document is acceptable" to a
+reader and meant the opposite. If you want a role never dispatched, remove it
+with `null` rather than emptying its gate — see
+[Removing something the defaults provide](#removing-something-the-defaults-provide).
+
+A partial override of a shipped role inherits its gate; only a role that
+declares the key sets it, so `planner: {model: other}` stays gated on
+`SPEC_APPROVED`.
+
+Declare `success_status` alongside
 `in_progress_status`: it is the status the supervisor sets when the agent exits
 `0`. Without it the agent runs, but its outcome is never recorded — the
 supervisor logs a warning and the slice keeps its in-progress status.

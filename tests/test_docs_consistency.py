@@ -58,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.19.0"
+    assert manifest["version"] == "2.20.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -222,17 +222,25 @@ def _documented_agent_blocks():
 def test_documented_agent_defaults_match_the_code():
     """The doc's default block is read as the defaults; drift makes it a lie.
 
-    Two kinds of block are not that, and are skipped. Roles the docs invent to
-    illustrate a point (`reviewer`) are not in DEFAULT_CONFIG. And a key the
+    Three kinds of block are not that, and are skipped. Roles the docs invent
+    to illustrate a point (`reviewer`) are not in DEFAULT_CONFIG. A key the
     plugin ships no default for — `skills`, `instructions` — can only be an
     example of a project override, since there is no default for it to
     contradict; holding those to equality would forbid the docs from showing a
-    shipped role being configured at all.
+    shipped role being configured at all. And `planner: null`, the example of
+    *removing* a shipped role, claims nothing about that role's defaults.
+
+    That last case arrived by crashing this test with
+    `AttributeError: 'NoneType' object has no attribute 'items'` — the same
+    assumption the slice was fixing three modules away, that an agent entry is
+    always a mapping. A guard is not exempt from the bug it guards against.
     """
     checked = 0
     for agents in _documented_agent_blocks():
         for role, documented in agents.items():
             if role not in DEFAULT_CONFIG["agents"]:
+                continue
+            if not isinstance(documented, dict):
                 continue
             actual = DEFAULT_CONFIG["agents"][role]
             for key, value in documented.items():
@@ -377,7 +385,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.19.0"
+    assert plugin["version"] == package["version"] == "2.20.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test

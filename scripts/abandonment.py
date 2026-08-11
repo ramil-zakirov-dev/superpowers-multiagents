@@ -34,11 +34,27 @@ from scripts.paths import lock_path, logs_dir
 from scripts.utils import _is_process_alive
 
 
+def _readable_roles(config: dict) -> list[dict]:
+    """The agent entries a report may safely read: the mappings.
+
+    `validate_config` refuses anything else and names the role. This module is
+    also reached from `cmd_status`, which runs on an *unvalidated* config on
+    purpose — "a report is a read" — and a broken role is the least useful
+    moment to stop saying what is on disk. Stated once here rather than as a
+    guard repeated in every comprehension below.
+    """
+    return [
+        agent
+        for agent in (config.get("agents") or {}).values()
+        if isinstance(agent, dict)
+    ]
+
+
 def in_progress_statuses(config: dict) -> set[str]:
     """Every status some configured role treats as 'work in flight'."""
     return {
         agent.get("in_progress_status")
-        for agent in (config.get("agents") or {}).values()
+        for agent in _readable_roles(config)
     } - {None}
 
 
@@ -52,7 +68,7 @@ def success_statuses(config: dict) -> set[str]:
     """
     return {
         agent.get("success_status")
-        for agent in (config.get("agents") or {}).values()
+        for agent in _readable_roles(config)
     } - {None}
 
 
@@ -67,10 +83,8 @@ def certifiable_statuses(config: dict) -> dict:
     """
     return {
         agent["produced_status"]: agent["success_status"]
-        for agent in (config.get("agents") or {}).values()
-        if isinstance(agent, dict)
-        and agent.get("produced_status")
-        and agent.get("success_status")
+        for agent in _readable_roles(config)
+        if agent.get("produced_status") and agent.get("success_status")
     }
 
 
@@ -83,7 +97,7 @@ def isolated_success_statuses(config: dict) -> set[str]:
     """
     return {
         agent.get("success_status")
-        for agent in (config.get("agents") or {}).values()
+        for agent in _readable_roles(config)
         if agent.get("isolated_worktree")
     } - {None}
 
@@ -171,7 +185,7 @@ def gate_for_in_progress(config: dict, status: str) -> str:
     """
     gates = {
         gate
-        for agent in (config.get("agents") or {}).values()
+        for agent in _readable_roles(config)
         if agent.get("in_progress_status") == status
         for gate in (agent.get("allowed_statuses") or [])
     }

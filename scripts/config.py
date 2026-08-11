@@ -132,10 +132,24 @@ def deep_merge(base: dict, override: dict) -> dict:
     Mappings merge key by key so that a partial override inherits the rest of
     the defaults. Scalars and lists are replaced wholesale — a user who lists
     `allowed_statuses` means exactly that list, not an addition to ours.
+
+    `null` removes the key, the meaning RFC 7386 JSON Merge Patch already
+    gives it. Without it a project cannot subtract: an `agents:` block naming
+    only `executor` still resolves a full `planner` from the defaults, at a
+    model the project may have decided against, and the role stays
+    dispatchable with nothing on disk saying otherwise. `{}` remains the way
+    to say "this key, all defaults", so a partial override is untouched.
+
+    This is behaviour-preserving everywhere else. Every reader of a top-level
+    section spells it `config.get(X) or {}`, so *absent* and *present but
+    null* already resolved alike; the one default that is itself `None`,
+    `sandbox.health_service`, reads the same by either route.
     """
     result = copy.deepcopy(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
             result[key] = deep_merge(result[key], value)
         else:
             result[key] = copy.deepcopy(value)
@@ -165,6 +179,17 @@ def resolve_agent(config: dict, role: str) -> dict:
     """Return a copy of an agent's config with global harness defaults applied."""
     agents = config.get("agents") or {}
     if role not in agents:
+        # "Not defined" reads as a typo, and for a name nobody ever shipped it
+        # is one. For a role the plugin does ship, absence has exactly one
+        # cause — the project removed it — and that is a different message: it
+        # is not a mistake to correct but a level someone performs by hand.
+        if role in DEFAULT_CONFIG["agents"]:
+            raise ConfigError(
+                f"Agent role '{role}' ships with the plugin, but this project "
+                f"removed it (`{role}: null` under `agents:`) — so that level "
+                f"is performed by hand here and there is nothing to dispatch. "
+                f"Roles this project defines: {sorted(agents)}"
+            )
         raise ConfigError(
             f"Agent role '{role}' is not defined in the configuration. "
             f"Defined roles: {sorted(agents)}"
@@ -243,6 +268,20 @@ def validate_config(config: dict) -> None:
                 )
 
     for role, agent in (config.get("agents") or {}).items():
+        # Before anything reads a key off it. `set(agent)` over a string
+        # iterates characters, and the loop below then reported
+        # `unknown key(s) ['-', '3', 'i', 'k', 'm']` for `planner: kimi-k3` —
+        # confident, fluent and wrong, which costs the reader more than a
+        # crash would.
+        if not isinstance(agent, dict):
+            raise ConfigError(
+                f"agent '{role}' must be a mapping of settings, got "
+                f"{type(agent).__name__}. Writing the value where the mapping "
+                f"goes is the common slip: `{role}:` on one line, then "
+                f"`model: ...` indented under it. To remove the role from this "
+                f"project entirely, write `{role}: null`."
+            )
+
         unknown_keys = set(agent) - KNOWN_AGENT_KEYS
         if unknown_keys:
             raise ConfigError(
@@ -255,7 +294,22 @@ def validate_config(config: dict) -> None:
                 raise ConfigError(
                     f"agent '{role}'.{key} = '{value}' is not in valid_statuses."
                 )
-        for status in agent.get("allowed_statuses") or []:
+        # An entry gate is mandatory. Absent, `null` and `[]` all resolved to
+        # the same thing and the dispatch guard read it as "this role has no
+        # gate" — dispatchable from any status, `VERIFIED_CLOSED` included,
+        # and from a status another role's supervisor currently owns. The
+        # three spellings a reader would use for "no document is acceptable"
+        # meant "every document is", and nothing said so.
+        if not agent.get("allowed_statuses"):
+            raise ConfigError(
+                f"agent '{role}' declares no allowed_statuses, so nothing says "
+                f"which documents it may be dispatched at — and an empty gate "
+                f"is not a closed one. List the statuses this role starts from "
+                f"(a partial override inherits them; only a role that declares "
+                f"the key sets it). To stop dispatching the role at all, remove "
+                f"it: `{role}: null`."
+            )
+        for status in agent["allowed_statuses"]:
             if status not in known:
                 raise ConfigError(
                     f"agent '{role}'.allowed_statuses contains unknown status '{status}'."

@@ -611,8 +611,13 @@ def cmd_dispatch_agent(args):
             print(f"[Provision Gate] Cannot dispatch {role} for {target_file.name}: {exc}")
             sys.exit(1)
 
+    # No truthiness test on the list. `if allowed_statuses and ...` made an
+    # unspoken gate mean a wide-open one — the reading that let a role be
+    # dispatched from `VERIFIED_CLOSED`. `validate_config`, three steps up at
+    # step 1, now refuses a role with no gate, so an empty list cannot arrive
+    # here; if one ever did, this fails closed rather than open.
     allowed_statuses = agent_config.get("allowed_statuses") or []
-    if allowed_statuses and current_status not in allowed_statuses:
+    if current_status not in allowed_statuses:
         print(f"[State Validation] Cannot dispatch {role} for {target_file.name}.")
         print(f"   Current status is '{current_status}'; {role} requires one of: {allowed_statuses}")
         sys.exit(1)
