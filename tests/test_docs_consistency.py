@@ -58,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.18.0"
+    assert manifest["version"] == "2.19.0"
 
 
 def test_no_shipped_text_contains_a_template_placeholder():
@@ -377,7 +377,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.18.0"
+    assert plugin["version"] == package["version"] == "2.19.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
@@ -722,6 +722,35 @@ def test_wait_and_reconcile_are_documented():
     assert "reconcile" in CONFIGURATION
     assert "--wait" in CONFIGURATION
     assert "kill -0" in CONFIGURATION
+
+
+def test_certify_is_documented_beside_the_outcome_it_repairs():
+    """`certify` is only findable if the situation that needs it is described.
+
+    An operator meets it holding a document at a drafting status that nothing
+    will move. Documenting the command without documenting `unknown` would
+    leave them reading about a repair for a state the docs never mention.
+    """
+    assert "certify" in CONFIGURATION
+    assert "produced_status" in CONFIGURATION
+
+
+def test_the_three_outcomes_are_documented():
+    """The exit code stopped being the verdict, and a user cannot infer that.
+
+    `unknown` in particular changes what an operator will see: a slice that
+    stays in progress with its stack still up, which reads like a stuck
+    pipeline unless it is written down as a deliberate answer.
+    """
+    assert "settle_window_seconds" in CONFIGURATION
+    assert "observation_deadline_seconds" in CONFIGURATION
+    assert "unknown" in CONFIGURATION.lower()
+
+
+def test_the_wait_success_narrowing_is_documented():
+    """`0` changed meaning. A caller with a script depending on the old one
+    has to be able to find out why it now sees `4`."""
+    assert "`4`" in CONFIGURATION
 
 
 def test_the_dispatch_contract_is_documented():

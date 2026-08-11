@@ -85,14 +85,25 @@ immediately.
                             +-- captures stdout+stderr to .superpowers/logs/
                             +-- claims the slice lock with its own PID
                             +-- on exit 0   -> the role's success_status
-                            +-- on exit !=0 -> back to the dispatch's gate
+                            +-- on artifact landed -> the role's success status
+                            +-- on nothing landed  -> back to the dispatch's gate
+                            +-- on cannot tell     -> nothing written at all
                             +-- fires on_<role>_complete / on_<role>_failed
                             +-- releases the lock, on every path
 
-The terminal status is derived from the child's exit code rather than asked
-of the agent in its prompt. An agent that crashes, or simply never reports,
-therefore cannot strand a slice: the dispatcher records the status the document
-sat at when the dispatch was accepted, and the supervisor writes it back.
+The terminal status is not asked of the agent in its prompt. An agent that
+crashes, or simply never reports, therefore cannot strand a slice: the
+dispatcher records the status the document sat at when the dispatch was
+accepted, and the supervisor writes it back.
+
+Nor is it read off the child's exit code alone, which was the design until
+2.19.0. The watched child is a *client* — `opencode run` talks to a
+long-lived server — so its exit reports that the client stopped and says
+nothing about the session. The verdict is a function of three things: the exit
+code, whether the artifact the role owes actually landed, and, when neither
+settles it, whether the agent's workspace is still changing. The third answer,
+`unknown`, writes no status, fires no hook and tears down no sandbox; see
+`docs/configuration.md`, "How a run's outcome is decided".
 
 The agent command is passed as an argument vector and spawned with
 `shell=False`. No shell parses a prompt, a path, or a configured argument at
@@ -107,11 +118,15 @@ rather than push a broken task through — still exits `0`, because nothing
 failed at the process level. The supervisor records the role's success status
 over a half-finished plan.
 
-That is deliberate. The exit code is the only signal the orchestrator can
-trust: asking the agent for its own verdict would put the state machine at the
-mercy of the process it exists to supervise, and a stuck agent is precisely the
-case where that verdict is least reliable. Deriving the status from a file the
-agent writes has the same flaw and adds a format the plugin would have to know.
+That is deliberate, and it survives 2.19.0 unchanged: asking the agent for its
+own verdict would put the state machine at the mercy of the process it exists
+to supervise, and a stuck agent is precisely the case where that verdict is
+least reliable. Deriving the status from a file the agent writes has the same
+flaw and adds a format the plugin would have to know.
+
+What 2.19.0 changed is the opposite error — treating the exit code as
+*sufficient*. It is now one input among three, and the check that can
+contradict it, "did the artifact land", is no longer gated on it agreeing.
 
 The cost is a narrow one, and it lands on the reader: `EXECUTION_COMPLETE`
 means "the executor's process ended cleanly", not "the plan is done". The

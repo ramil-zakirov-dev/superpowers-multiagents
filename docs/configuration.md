@@ -507,14 +507,26 @@ python scripts/orchestrator.py dispatch-agent --role executor --file <plan> --wa
 
 `wait` (also standalone: `wait --slice <slice_id> [--timeout S] [--poll S]`)
 blocks while the slice is in progress and a live supervisor owns it, then
-exits `0` when the status moves, `2` when the supervisor died with the status
-unchanged, `1` when `--timeout` elapses with neither (the default is no
-timeout — the caller backgrounding the wait has its own), and `3` when it
-could not start waiting at all: an unknown `--slice`, or a config it cannot
-read. `1` and `3` are kept apart on purpose — `1` means "not finished yet",
-`3` means "this will never finish", and a caller that cannot tell them apart
-waits forever on a typo. Its last line names the terminal status, the elapsed
-time and the log path, so no second command is needed.
+exits:
+
+| code | meaning |
+| --- | --- |
+| `0` | the slice reached a status some role calls `success_status` |
+| `4` | the dispatch **ended without** reaching one — a gate it was returned to, or `FAILED` |
+| `2` | the supervisor died with the status unchanged |
+| `1` | `--timeout` elapsed with none of the above (the default is no timeout — the caller backgrounding the wait has its own) |
+| `3` | it could not start waiting at all: an unknown `--slice`, or a config it cannot read |
+
+`0` and `4` were one code until 2.19.0, and that is what made backgrounding
+this unsafe: "the plan is ready" and "the run died and the slice went back to
+its gate" both printed a line and exited `0`, so the only way to tell them
+apart was to parse the text. A caller acting on `0` could go on to approve a
+plan that was never written.
+
+`1` and `3` are kept apart for the same kind of reason — `1` means "not
+finished yet", `3` means "this will never finish", and a caller that cannot
+tell them apart waits forever on a typo. The last line names the terminal
+status, the elapsed time and the log path, so no second command is needed.
 
 Do **not** hand-roll this loop. On Windows, `kill -0 <pid>` in Git Bash
 reports a live native pid as "No such process" (measured on Windows 11, pid
@@ -586,6 +598,77 @@ all, which is not a dead dispatch but a human at work: dispatch takes the lock
 before it writes the in-progress status, so a document at one with no lock was
 never dispatched into it. Nothing went unrecorded there and nothing needs
 releasing; `set-status` is that document's tool, not this.
+
+## How a run's outcome is decided
+
+The supervisor does not read the child's exit code as the answer. Under the
+shipped harness the child is `opencode run`, a thin client to a long-lived
+server, so its exit says the client stopped and says nothing about the session
+— which on one measured run kept working for four and a half minutes after
+its client died. Read as a health check, the exit code is a *shallow* one
+(the process ended) standing in for a *deep* one (the work landed).
+
+The deep check is `_unmet_postcondition`, and it now runs whatever the exit
+code said. Three outcomes follow:
+
+| exit | did the artifact land | verdict |
+| --- | --- | --- |
+| any | yes — commits on `feat/<slice_id>` | **success**, the role's `success_status` |
+| `0` | no | **returned to gate**, and the stack is torn down |
+| non-zero | no, and the workspace has gone quiet | **returned to gate**, and the stack is torn down |
+| non-zero | no, but the workspace is still changing | **unknown** |
+
+A commit settles the question whatever the client did, because a commit is
+atomic: on the branch means written and finished. A *document* is not — a
+producing role writes its file the moment it starts typing — so a producing
+role whose client dies gets `unknown` rather than a promotion, and the way out
+is `certify` below.
+
+**`unknown` writes nothing.** No status, no completion hook, and no sandbox
+teardown: reclaiming a stack from an agent that is still using it is the harm
+this outcome exists to prevent. The slice stays at its in-progress status,
+which is true, and `allowed_statuses` therefore refuses a re-dispatch into a
+tree that may still have an agent in it.
+
+Liveness is read from the one fact that holds whatever the agent is: **a
+working agent changes its workspace.** Two windows bound the guessing, both
+under `state_machine`, both optional:
+
+```yaml
+state_machine:
+  settle_window_seconds: 300        # quiet this long ⇒ the agent is gone too
+  observation_deadline_seconds: 1800  # still changing after this ⇒ unknown
+```
+
+The settle window is paid on every genuinely failed dispatch — that run now
+takes this long to be declared failed. Lowering it does not buy a faster
+report so much as it buys back the original defect: an agent that is merely
+thinking looks identical to one that has died, and the stack goes with it.
+
+### Certifying a document a dead run finished
+
+A produced document is born at its role's `produced_status` (`PLAN_DRAFTING`),
+and only the supervisor that watched the run end may move it to
+`success_status`. When that supervisor dies with the document already written,
+nothing can travel that edge. `reconcile` is not the way out — it moves
+documents *back* to their gate, which here would discard a finished plan.
+
+```bash
+python scripts/orchestrator.py certify --file <produced document>
+```
+
+It records one claim: *I read this and it is complete.* That is not the
+self-certification 2.17.0 removed. `EXECUTION_COMPLETE` asserts something
+about the world, a third party can check it, and the party being asked has
+reason to overstate it — it stays reserved to the supervisor. `PLAN_GENERATED`
+asserts only that writing stopped, which no observer can determine once the
+writer is gone, and a human who has read the document is a better instrument
+for it than a process signal. `approve-plan`, where quality is actually
+judged, is untouched and still comes after.
+
+It refuses on a status no role produces (naming what it would accept), and
+while a live supervisor owns the slice — that supervisor will record the
+outcome itself, from evidence this command cannot see.
 
 ## Which directory a command wants
 
