@@ -2,13 +2,21 @@
 """Supervisor for a single dispatched agent.
 
 This process is the background job. It owns one agent from spawn to terminal
-status: it captures the agent's output, derives the slice's next status from
-the child's exit code, fires the completion hook, and releases the lock on
-every exit path.
+status: it captures the agent's output, judges what the run left behind, fires
+the completion hook, and releases the lock on every exit path.
 
-Deriving status from an exit code is the point. Previously the agent was
-asked, in its prompt, to set its own terminal status — so an agent that
-crashed or simply forgot left the slice stranded with no way back.
+Not asking the agent for its own status is still the point. Previously it was
+asked, in its prompt, to set one — so an agent that crashed or simply forgot
+left the slice stranded with no way back.
+
+What has changed is the belief that the child's exit code answers the
+question. It does not, and under the shipped harness it cannot: the argv is
+`opencode run …`, a thin client to a long-lived server, so its exit reports
+that the client stopped and says nothing about the session still working. Read
+through the health-check distinction, the exit code is a *shallow* check
+standing in for a *deep* one — and the deep one is already here, in
+`_unmet_postcondition`. The exit code is now one input to the verdict rather
+than the whole of it.
 """
 
 import argparse
@@ -241,15 +249,15 @@ def _no_commits_on_the_branch(
     count = commits_since(base_ref, branch, project_root)
     if count is None:
         return (
-            f"[runner] ERROR: '{role}' exited 0 but git could not count commits on "
-            f"{branch} since {base_ref[:12]} — the branch may be gone. Nothing "
+            f"[runner] ERROR: git could not count commits on {branch} since "
+            f"{base_ref[:12]} for '{role}' — the branch may be gone. Nothing "
             f"observed the work landing, so returning the slice to its gate rather "
             f"than certifying it."
         )
     if count > 0:
         return ""
     return (
-        f"[runner] ERROR: '{role}' exited 0 but left no commits on {branch} "
+        f"[runner] ERROR: '{role}' left no commits on {branch} "
         f"since {base_ref[:12]}. That is the branch close-slice merges, so it "
         f"would have nothing to take. If the work exists, it is in another tree. "
         f"Returning the slice to its gate rather than certifying the run."
@@ -334,19 +342,35 @@ def _record_outcome(
         return
 
     state_machine = config["state_machine"]
+
+    # The deep check is the thing able to correct the shallow one, so gating it
+    # on the shallow one agreeing switched it off in every case it was built
+    # for. It now runs whenever some artifact can speak for the run.
+    #
+    # Which artifacts can differs, and the difference is atomicity. A commit is
+    # an indivisible act of completion: on the branch means written and
+    # finished, whatever the watched process exited with. A document is not —
+    # a producing role writes the file the moment it starts typing (#21), so
+    # its existence says there is something to read, not that anyone stopped
+    # writing. That is why `_promote_produced` stays on the exit-0 path.
+    #
+    # A role with neither has no evidence at all, and for it the exit code
+    # remains the only witness. It must not be *rescued* by a check that had
+    # nothing to look at: an empty postcondition means unexamined, not passed.
     missing = ""
-    if exit_code == 0:
+    examined = exit_code == 0 or bool(agent.get("isolated_worktree"))
+    if examined:
         missing = _unmet_postcondition(
             role, agent, target_file, log_file, project_root, base_ref
         )
-        if not missing:
+        if not missing and exit_code == 0:
             missing = _promote_produced(
                 role, agent, target_file, log_file, state_machine
             )
         if missing:
             _log_and_print(log_file, missing)
 
-    if exit_code == 0 and not missing:
+    if examined and not missing:
         candidates = [agent.get("success_status")]
         event = f"on_{role}_complete"
     else:

@@ -66,6 +66,12 @@ COMMITS_SOMETHING = (
 
 DOES_NOTHING = "print('I thought about it')"
 
+#: The 2026-08-11 shape: the work lands, then the process the runner is
+#: watching dies. Under the shipped harness that process is `opencode run`, a
+#: thin client to a long-lived server, so its death says nothing about the
+#: session — and on that run it said it 72 seconds into 28 minutes of work.
+COMMITS_THEN_DIES = COMMITS_SOMETHING + "; import sys; sys.exit(1)"
+
 
 def _supervise_executor(
     project_root, document, argv, base_ref, cwd=None, gate_status="PLAN_APPROVED"
@@ -142,6 +148,35 @@ def test_an_isolated_run_that_committed_reaches_its_success_status(
     )
 
     assert code == 0
+    assert (
+        parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
+        == "EXECUTION_COMPLETE"
+    )
+
+
+def test_a_client_that_died_over_landed_work_is_still_a_success(
+    tmp_project, demo_spec
+):
+    """The exit code answers a different question from the one being asked.
+
+    The postcondition is the deep check: did the work land on the branch
+    close-slice merges. It was wired to run only when the exit code had
+    already said success — so in every case where the shallow signal is wrong,
+    the check able to correct it was switched off. Here the commit is on the
+    branch and the client is dead, and the run is a success on the evidence.
+    """
+    _use_isolated_executor(tmp_project, demo_spec, COMMITS_THEN_DIES)
+    _set_status(demo_spec, "EXECUTING")
+    worktree = _make_slice_branch(tmp_project)
+    base = branch_tip("feat/slice-01-demo", tmp_project)
+
+    code, _ = _supervise_executor(
+        tmp_project, demo_spec,
+        [sys.executable, "-B", "-c", COMMITS_THEN_DIES], base, cwd=worktree,
+    )
+
+    assert code == 1, "the runner still reports what the child did"
+    assert commits_since(base, "feat/slice-01-demo", tmp_project) == 1
     assert (
         parse_frontmatter(demo_spec.read_text(encoding="utf-8"))["status"]
         == "EXECUTION_COMPLETE"

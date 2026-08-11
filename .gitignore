@@ -1,7 +1,11 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-.pytest-tmp/
+# Windows can leave a basetemp root undeletable — a held handle survives the
+# run that made it — and pytest then errors every tmp_path test on cleanup.
+# The escape is `--basetemp=.pytest-tmpN`, so the pattern is ignored, not the
+# one name.
+.pytest-tmp*/
 node_modules/
 .DS_Store
 
