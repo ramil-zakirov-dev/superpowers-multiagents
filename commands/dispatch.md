@@ -6,7 +6,9 @@ allowed-tools: Bash(python:*), Bash(echo:*), Bash(cut:*)
 
 !`python "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.py" dispatch-agent --role "$(echo "$ARGUMENTS" | cut -d' ' -f1)" --file "$(echo "$ARGUMENTS" | cut -s -d' ' -f2-)"`
 
-Configured roles: `planner`, `executor`.
+Which roles exist is the project's `.superpowers/agents.yaml` to say, not this
+file's — a name that is wrong, or removed with `<role>: null`, is refused above
+by an error naming every role the project really defines.
 
 The dispatch above has already been attempted; its output is included. A
 successful dispatch launches a supervised background agent. The supervisor, not

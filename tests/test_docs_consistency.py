@@ -61,6 +61,34 @@ def test_plugin_manifest_has_distribution_metadata():
     assert manifest["version"] == "2.20.0"
 
 
+def test_no_command_file_asserts_which_roles_a_project_has():
+    """`commands/dispatch.md` carried the literal
+
+        Configured roles: `planner`, `executor`.
+
+    which no project's config was ever consulted for. It is the most-read
+    sentence about role configuration in the system — injected whenever the
+    dispatch skill loads — and the only one that never read the configuration.
+
+    2.20.0 made `<role>: null` remove a role for real, so a project can now
+    subtract one and still be greeted by a command insisting it has it: the
+    role leaves the machine and stays in the interface, which is the defect
+    #32 was opened about, one layer up.
+
+    The guard is over the *claim*, not the word. Command files may name a role
+    in an example; what they may not do is state, as fact, which roles a
+    project has. `config.resolve_agent` already names the real ones in its
+    refusal, and unlike this file it cannot be wrong.
+    """
+    for path in sorted((REPO_ROOT / "commands").glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        for claim in ("Configured roles:", "Available roles:", "Defined roles:"):
+            assert claim not in text, (
+                f"{path.name} states which roles exist; only "
+                f".superpowers/agents.yaml knows that"
+            )
+
+
 def test_no_shipped_text_contains_a_template_placeholder():
     """A published plugin must not ship the scaffold's own placeholders."""
     placeholders = ("your-username", "your-org", "YOUR_NAME", "<your-")
@@ -545,22 +573,25 @@ def test_every_status_a_command_sets_is_a_real_status():
     assert found <= known, f"unknown statuses in commands/: {sorted(found - known)}"
 
 
-def test_dispatch_command_lists_exactly_the_configured_roles():
-    """`--role "$1"` is a substitution, so the prose list is the only checkable
-    claim the file makes — and it is the only place a user learns what to pass.
-    """
-    from scripts.config import DEFAULT_CONFIG
+def test_dispatch_command_sends_the_reader_to_the_config_for_its_roles():
+    """This replaces a guard that checked the wrong thing, which is worth
+    recording because the wrong thing looked exactly like the right one.
 
+    The old test pinned `Configured roles: planner, executor` against
+    `DEFAULT_CONFIG` and passed for as long as the file existed. What it
+    proved was that the sentence matched the *plugin's defaults* — which is
+    precisely the claim that is false in any project that overrides `agents:`,
+    and every project that uses this plugin overrides `agents:`. A green test
+    over a sentence nobody could keep true is how the line survived to be
+    injected into every dispatch (#36).
+
+    So the checkable claim is now the opposite one: the file points at the
+    configuration instead of restating it.
+    """
     body = (COMMANDS_DIR / "dispatch.md").read_text(encoding="utf-8")
-    line = next(
-        (ln for ln in body.split("\n") if ln.startswith("Configured roles:")),
-        None,
-    )
-    assert line is not None, "dispatch.md does not state which roles exist"
-    listed = {token.strip(" `.") for token in line.split(":", 1)[1].split(",")}
-    assert listed == set(DEFAULT_CONFIG["agents"]), (
-        f"dispatch.md lists {sorted(listed)}, configured roles are "
-        f"{sorted(DEFAULT_CONFIG['agents'])}"
+    assert "agents.yaml" in body, (
+        "dispatch.md must say where roles are defined, since it no longer "
+        "claims to know them"
     )
 
 
