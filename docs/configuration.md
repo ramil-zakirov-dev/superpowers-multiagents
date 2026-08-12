@@ -379,6 +379,40 @@ prose. The orchestrator owns the checkbox and everything after the ` — `
 separator, and rewrites nothing outside the markers. Naming a slice whose spec
 does not exist yet is expected — it renders `not yet specced`.
 
+#### Letting a closure file itself
+
+`close-slice` refreshes every brief that already lists the slice. For a slice no
+brief lists there was nothing it could do — and, until 2.21.0, nothing it said:
+the output was byte-identical to that of a slice belonging to no milestone. The
+gap surfaced much later at `milestone check`, as a track realised by nothing,
+which is the state `close-milestone` refuses on. The pipeline created the
+condition quietly and blocked on it afterwards.
+
+A slice says which track owns it, in its own frontmatter:
+
+```yaml
+slice_id: "i18n-authoring-surface"
+milestone_id: "devtools-i18n"
+track: "track-3"
+status: PLAN_APPROVED
+```
+
+`track:` is optional and names the heading's **id** — `track-3` for
+`### track-3: authoring surface` — so rewording a track's prose does not
+invalidate every slice citing it. `close-slice` then inserts the entry under
+that heading and syncs it in the same step. The key is carried onto a produced
+document the way `milestone_id` is, which matters because `close-slice` targets
+the plan: a plan that dropped it would close a slice that could file itself
+nowhere.
+
+Nothing is inferred. A `track:` the brief does not declare is reported, naming
+the tracks it does declare, and nothing is written — a slice filed under a
+guessed heading corrupts the one document nothing else can check. A slice with a
+`milestone_id` and no `track:` is reported too, naming the key that would fix
+it. A slice with no `milestone_id` at all is left in peace: standalone slices
+are ordinary, and warning about them trains the reader to ignore the warning
+that matters.
+
 ## Adding Custom Agents
 
 Add any role to the `agents` section. Declare `allowed_statuses` — it is the
@@ -565,6 +599,7 @@ exits:
 | `0` | the slice reached a status some role calls `success_status` |
 | `4` | the dispatch **ended without** reaching one — a gate it was returned to, or `FAILED` |
 | `2` | the supervisor died with the status unchanged |
+| `5` | the supervisor ended without judging the run, and said so — see [A run nobody judged](#a-run-nobody-judged) |
 | `1` | `--timeout` elapsed with none of the above (the default is no timeout — the caller backgrounding the wait has its own) |
 | `3` | it could not start waiting at all: an unknown `--slice`, or a config it cannot read |
 
@@ -650,6 +685,11 @@ before it writes the in-progress status, so a document at one with no lock was
 never dispatched into it. Nothing went unrecorded there and nothing needs
 releasing; `set-status` is that document's tool, not this.
 
+An **unresolved** lock is neither, and reconcile handles it before those two
+checks — the lock reads as held, so the live-supervisor refusal would otherwise
+fire on a slice with no supervisor at all. See [A run nobody
+judged](#a-run-nobody-judged).
+
 ## How a run's outcome is decided
 
 The supervisor does not read the child's exit code as the answer. Under the
@@ -678,8 +718,64 @@ is `certify` below.
 **`unknown` writes nothing.** No status, no completion hook, and no sandbox
 teardown: reclaiming a stack from an agent that is still using it is the harm
 this outcome exists to prevent. The slice stays at its in-progress status,
-which is true, and `allowed_statuses` therefore refuses a re-dispatch into a
-tree that may still have an agent in it.
+which is true.
+
+### A run nobody judged
+
+Writing nothing was not enough, and the reason is that *nothing* is also what an
+abandoned dispatch leaves behind. Both look identical from outside — supervisor
+gone, status unmoved — so `wait` classified an unjudged run as abandonment,
+exited `2`, and advised `reconcile`, which returns the slice to its gate while
+an agent may still be writing in that tree. Measured on 2026-08-12: a run that
+had in fact succeeded (22 commits, a green suite when checked by hand) left its
+slice at `EXECUTING` with no signal at all, and its outcome had to be
+reconstructed from the log and the branch — the reconstruction the exit code was
+supposed to replace.
+
+So the verdict outlives the runner, in the lock the runner already owns:
+
+```json
+{ "slice_id": "…", "state": "unresolved", "verdict": "unknown",
+  "role": "executor", "exit_code": 3221226505, "log": "…", "unresolved_at": … }
+```
+
+That state is **held unconditionally** — no pid to consult, no grace window to
+run out, because it exists precisely because observation failed. Four
+consequences, and the last is the point:
+
+* `dispatch` refuses, naming both ways out rather than claiming a supervisor is
+  running. This no longer depends on `allowed_statuses` being configured
+  tightly.
+* `wait` returns exit `5`, distinct from abandonment's `2`, because the caller
+  that backgrounds a wait acts on the number and `2` would send it to
+  `reconcile`.
+* `status` describes the state instead of reporting the slice as abandoned.
+* Nothing self-heals it. A human resolves it, with one of:
+
+```bash
+python scripts/orchestrator.py certify --file <produced document>
+python scripts/orchestrator.py reconcile --file <document> --yes
+```
+
+`certify` is for a produced document that reads as complete — the path the
+runner's own log recommends for a producing role. `reconcile` abandons the run
+and returns the slice to its gate; it asserts something no machine can observe,
+that no agent is still writing in `.worktrees/<slice_id>`, so it says exactly
+that and keeps `--yes` in front of it. Neither touches the work already on
+`feat/<slice_id>`.
+
+Reported under `--until-success` as well, unlike failure and abandonment. Those
+are swallowed because the caller repairs them by hand and a wakeup it will act
+on nothing for is noise. This one holds a lock and blocks every re-dispatch of
+the slice, so silence there means the operator finds out never.
+
+One report was corrected alongside it. The postcondition — "left no commits on
+`feat/<slice_id>`" — was computed at the client's death and printed
+immediately, landing one line above "the run's fate was not observed": a
+decision announced above the line saying no decision was reached, and false by
+the time anyone read it, since the agent kept committing throughout the watch.
+It is now held until the verdict is known, and on `unknown` reported as a dated
+observation rather than a conclusion.
 
 Liveness is read from the one fact that holds whatever the agent is: **a
 working agent changes its workspace.** Two windows bound the guessing, both
@@ -719,7 +815,10 @@ judged, is untouched and still comes after.
 
 It refuses on a status no role produces (naming what it would accept), and
 while a live supervisor owns the slice — that supervisor will record the
-outcome itself, from evidence this command cannot see.
+outcome itself, from evidence this command cannot see. An [unresolved
+lock](#a-run-nobody-judged) is deliberately not caught by that second refusal:
+there is no supervisor, the runner's own log sends the operator here, and
+certifying resolves both the document and the lock.
 
 ## Which directory a command wants
 

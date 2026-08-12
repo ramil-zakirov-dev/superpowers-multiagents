@@ -38,7 +38,12 @@ from scripts.locks import (
     claim_slice_lock,
     mark_lock_unresolved,
 )
-from scripts.orchestrator import _report_wait_result, cmd_certify, cmd_reconcile
+from scripts.orchestrator import (
+    _report_wait_result,
+    cmd_certify,
+    cmd_reconcile,
+    cmd_status,
+)
 from scripts.paths import lock_path
 from tests.test_commit_postcondition import _git, _make_slice_branch, _set_status
 from tests.test_unknown_outcome import (
@@ -206,6 +211,29 @@ def test_an_unresolved_slice_is_not_abandoned(tmp_path):
 
     assert not abandonment.is_abandoned(
         "EXECUTING", "slice-01", tmp_path, {"EXECUTING"}
+    )
+
+
+def test_status_annotates_an_unresolved_slice(document, capsys):
+    """Found by running the CLI, not by reading it — the unit tests above all
+    passed while `status` printed a plain `[EXECUTING]` row with no annotation
+    at all.
+
+    Both existing branches decline, each correctly: the slice is not abandoned
+    (the lock is held) and not hand-owned (a lock exists). Their combined
+    silence is the worst available reading of a wedged slice — nothing will
+    move it, and the report says nothing.
+    """
+    root, doc = document
+    lock_file = acquire_slice_lock("slice-01", root)
+    mark_lock_unresolved(lock_file, role="executor", exit_code=1, log="x.log")
+
+    cmd_status(argparse.Namespace(dir=str(root / "docs" / "superpowers"), all=False))
+
+    out = capsys.readouterr().out
+    assert "unresolved" in out
+    assert "abandoned" not in out, (
+        "an unresolved run is not an abandoned one, and the advice differs"
     )
 
 

@@ -269,7 +269,21 @@ def cmd_status(args):
             # instrument than one that lies quietly.
             if label in in_progress:
                 slice_id = data.get("slice_id", filepath.stem)
-                if abandonment.is_abandoned(label, slice_id, project_root, in_progress):
+                _lock, lock_data, _held = abandonment.read_lock_state(
+                    slice_id, project_root
+                )
+                if lock_data and lock_data.get("state") == LOCK_STATE_UNRESOLVED:
+                    # Neither of the two branches below fires here, and each
+                    # for a correct reason: the slice is not abandoned (the
+                    # lock is held) and not hand-owned (a lock exists). Left to
+                    # them the row printed a plain in-progress status, which is
+                    # the one reading a wedged slice must not get — nothing
+                    # will move it, and nothing said so.
+                    print(
+                        f"{'':23}⚠ "
+                        f"{abandonment.lock_evidence(slice_id, project_root)}"
+                    )
+                elif abandonment.is_abandoned(label, slice_id, project_root, in_progress):
                     evidence = abandonment.lock_evidence(slice_id, project_root)
                     print(f"{'':23}⚠ abandoned: {evidence}; run `reconcile`")
                 elif abandonment.is_hand_owned(

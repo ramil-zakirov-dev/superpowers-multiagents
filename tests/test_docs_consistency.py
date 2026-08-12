@@ -58,7 +58,7 @@ def test_plugin_manifest_has_distribution_metadata():
     )
     for key in ("name", "description", "version", "author", "license", "repository"):
         assert key in manifest, f"plugin.json is missing '{key}'"
-    assert manifest["version"] == "2.20.0"
+    assert manifest["version"] == "2.21.0"
 
 
 def test_no_command_file_asserts_which_roles_a_project_has():
@@ -234,7 +234,18 @@ def test_documented_sandbox_example_survives_the_real_validator():
 
 
 def _documented_agent_blocks():
-    """Every ```yaml block in configuration.md that declares `agents:`."""
+    """Every ```yaml block in configuration.md that declares `agents:`.
+
+    Read as a document *stream*, not a single document. A frontmatter example
+    is fenced ```yaml and legitimately carries `---` delimiters, which makes it
+    two documents; `load` crashed on the first one with "but found another
+    document", failing a guard about agent defaults over a block that declares
+    no agents at all.
+
+    Parse errors are still fatal. Malformed YAML in shipped documentation is a
+    defect worth catching, and this is the only thing that reads it — a
+    frontmatter example is not malformed, it is plural.
+    """
     import re as _re
 
     from ruamel.yaml import YAML
@@ -242,9 +253,10 @@ def _documented_agent_blocks():
     from scripts.utils import _to_plain_dict
 
     for block in _re.findall(r"```yaml\n(.*?)```", CONFIGURATION, _re.DOTALL):
-        parsed = _to_plain_dict(YAML(typ="rt").load(block)) or {}
-        if isinstance(parsed.get("agents"), dict):
-            yield parsed["agents"]
+        for document in YAML(typ="rt").load_all(block):
+            parsed = _to_plain_dict(document) or {}
+            if isinstance(parsed, dict) and isinstance(parsed.get("agents"), dict):
+                yield parsed["agents"]
 
 
 def test_documented_agent_defaults_match_the_code():
@@ -413,7 +425,7 @@ def test_package_json_version_matches_plugin_manifest():
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert plugin["version"] == package["version"] == "2.20.0"
+    assert plugin["version"] == package["version"] == "2.21.0"
 
 
 #: Categories the official marketplace actually uses. Hardcoded because a test
