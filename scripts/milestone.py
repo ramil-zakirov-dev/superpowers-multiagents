@@ -370,6 +370,75 @@ def tracks(text: str) -> list[tuple[str, list[str]]]:
     return declared
 
 
+def track_id(heading: str) -> str:
+    """`track-2` from `track-2: operator surface`.
+
+    The id is what a slice cites, and the prose after the colon is free to be
+    reworded — as it has been, mid-milestone, more than once. Matching the
+    whole heading would make a slice's frontmatter restate a title it does not
+    own.
+    """
+    return heading.split(":", 1)[0].strip()
+
+
+def track_ids(text: str) -> list[str]:
+    """Every track id the region declares, in document order."""
+    return [track_id(heading) for heading, _entries in tracks(text)]
+
+
+def insert_entry(text: str, track: str, slice_id: str) -> str:
+    """Add `- [ ] <slice_id>` under `track`, at the end of that track's block.
+
+    The complement `sync_text` never had. Between them the machine can now
+    maintain a track region end to end: this creates the line, that one keeps
+    it true. Nothing infers the track — a slice says which one it belongs to,
+    or no entry is written, because filing a slice under a guessed track is
+    worse than the hand edit it would replace.
+
+    Idempotent. `close-slice` can be run twice, and a brief edited by hand
+    before this existed must not gain a second copy of its own entry.
+
+    Raises `ValidationError` naming the tracks that do exist when `track` does
+    not. A typo has to stop here: the region is the milestone's own account of
+    what it is made of, and a slice silently filed under the wrong heading
+    corrupts the one document nothing else can check.
+    """
+    begin, end = _region_bounds(text)
+    lines = text.split("\n")
+
+    if slice_id in track_entries(text):
+        return text
+
+    boundaries = []            # (index of the heading, id)
+    for index in range(begin + 1, end):
+        heading = _TRACK_HEADING.match(lines[index])
+        if heading:
+            boundaries.append((index, track_id(heading.group("name"))))
+
+    match = next((index for index, name in boundaries if name == track), None)
+    if match is None:
+        declared = [name for _index, name in boundaries]
+        raise ValidationError(
+            f"no track '{track}' in this brief. It declares "
+            f"{declared or 'no tracks at all'}. A slice is filed under the "
+            f"track it names or not at all — guessing would put it under a "
+            f"heading nobody chose."
+        )
+
+    # The block runs to the next heading, or to the closing marker for the
+    # last track. Trailing blank lines belong to the separation between
+    # blocks, not to the block, so the entry goes above them — otherwise
+    # every closure pushes the region one line further apart.
+    stop = next(
+        (index for index, _name in boundaries if index > match), end
+    )
+    while stop - 1 > match and not lines[stop - 1].strip():
+        stop -= 1
+
+    lines.insert(stop, f"- [ ] {slice_id}")
+    return "\n".join(lines)
+
+
 def tracks_without_slices(text: str) -> list[str]:
     """Every declared track that lists no slice — realised by nothing."""
     return [name for name, entries in tracks(text) if not entries]
@@ -504,6 +573,31 @@ def briefs_listing(slice_id: str, start_path: Path) -> list[Path]:
         if slice_id in entries:
             listing.append(candidate)
     return listing
+
+
+def brief_for(milestone_id: str, start_path: Path) -> Path | None:
+    """The brief declaring `milestone_id`, resolved from a slice's own location.
+
+    `briefs_listing` answers "which briefs already mention this slice", which
+    is the wrong question for a slice that no brief mentions yet — the very
+    case that needed a human. This one asks what the slice itself declares.
+
+    Returns None rather than raising: a `milestone_id` naming nothing on disk
+    is a fact for the caller to report, and discovery must never be able to
+    fail a slice's closure.
+    """
+    milestones_dir = Path(start_path).parent.parent / MILESTONES_DIRNAME
+    if not milestones_dir.is_dir():
+        return None
+
+    for candidate in sorted(milestones_dir.glob("*.md")):
+        try:
+            frontmatter, _text = load(candidate)
+        except (OSError, ValidationError):
+            continue
+        if frontmatter.get("milestone_id") == milestone_id:
+            return candidate
+    return None
 
 
 def search_dirs_for(brief_path: Path) -> list[Path]:

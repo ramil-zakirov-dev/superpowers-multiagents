@@ -85,6 +85,14 @@ def frontmatter_block(
     if milestone_id:
         lines.append(f"milestone_id: {_quote(milestone_id)}")
 
+    # Which track of that milestone. Carried for the same reason as
+    # `milestone_id`, and load-bearing for the same reason `depends_on` was:
+    # `close-slice` targets the *plan*, so a plan that dropped this key would
+    # close a slice that could then file itself under no track at all.
+    track = source.get("track") or ""
+    if track:
+        lines.append(f"track: {_quote(track)}")
+
     title = source.get("title") or ""
     if title:
         rendered = title_template.format(title=title) if title_template else title

@@ -54,7 +54,7 @@ from scripts import produced
 from scripts import provision
 from scripts import sandbox
 from scripts import skills as skills_mod
-from scripts.utils import find_project_root
+from scripts.utils import atomic_write_text, find_project_root
 
 #: Root of this plugin — the supervisor is spawned with this as its cwd so
 #: that `python -m scripts.runner` resolves regardless of the user's cwd.
@@ -355,19 +355,73 @@ def _set_milestone_status(filepath, new_status, valid_statuses, transitions):
 
 
 def _sync_briefs_listing(slice_id: str, filepath: Path) -> None:
-    """Refresh every milestone brief whose tracks list this slice.
+    """Refresh every milestone brief whose tracks list this slice — or file it.
 
-    Closing a slice and refreshing the milestones that list it are one command,
-    so a checkbox cannot go stale. A sync failure is a warning: the slice's
-    outcome is already recorded, and a later step must not overturn it -- the
-    same rule the completion hook and the sandbox teardown follow.
+    Closing a slice and recording that closure everywhere it is written down
+    are one command, so a checkbox cannot go stale. A failure here is a
+    warning: the slice's outcome is already recorded, and a later step must not
+    overturn it -- the same rule the completion hook and the sandbox teardown
+    follow.
+
+    When no brief lists the slice there is nothing to refresh, and until this
+    was written the command simply said nothing — output byte-identical to a
+    slice that belongs to no milestone at all. Three closures in one milestone
+    each needed a hand edit nobody was told to make, and the gap surfaced much
+    later at `milestone check` as a track realised by nothing (issue #35).
     """
-    for brief in milestone_mod.briefs_listing(slice_id, filepath):
+    listed = milestone_mod.briefs_listing(slice_id, filepath)
+    for brief in listed:
         try:
             milestone_mod.sync_file(brief)
             print(f"Refreshed {brief.name}.")
         except (OrchestratorError, OSError) as exc:
             print(f"Warning: could not refresh {brief.name}: {exc}")
+    if listed:
+        return
+
+    try:
+        frontmatter = parse_frontmatter(filepath.read_text(encoding="utf-8"))
+    except OSError:
+        return
+
+    milestone_id = frontmatter.get("milestone_id") or ""
+    if not milestone_id:
+        # A standalone slice, which is legitimate and common. Warning here
+        # would train the reader to ignore the warning below.
+        return
+
+    brief = milestone_mod.brief_for(milestone_id, filepath)
+    if brief is None:
+        print(
+            f"Warning: {filepath.name} declares milestone_id "
+            f"'{milestone_id}', and no brief under milestones/ carries it. "
+            f"Nothing recorded this closure at the milestone level."
+        )
+        return
+
+    track = frontmatter.get("track") or ""
+    if not track:
+        print(
+            f"Warning: no track in {brief.name} lists '{slice_id}', so this "
+            f"closure was recorded nowhere at the milestone level."
+        )
+        print(
+            f"   Nothing here can tell which track owns it. Add "
+            f"`track: \"track-N\"` to {filepath.name} and re-run, or add the "
+            f"entry to {brief.name} by hand."
+        )
+        print(f"   `milestone check --file {brief}` reports what is unrealised.")
+        return
+
+    try:
+        text = brief.read_text(encoding="utf-8")
+        updated = milestone_mod.insert_entry(text, track, slice_id)
+        if updated != text:
+            atomic_write_text(brief, updated)
+        milestone_mod.sync_file(brief)
+        print(f"Listed {slice_id} under {track} in {brief.name}.")
+    except (OrchestratorError, OSError) as exc:
+        print(f"Warning: could not list {slice_id} in {brief.name}: {exc}")
 
 
 def cmd_set_status(args):

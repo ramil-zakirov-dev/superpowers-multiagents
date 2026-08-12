@@ -128,6 +128,20 @@ def test_frontmatter_block_carries_a_milestone_the_source_has():
     assert 'milestone_id: "billing-v2"' in block
 
 
+def test_frontmatter_block_carries_the_track_the_source_names():
+    """A fact about the slice, like `milestone_id`, and load-bearing for the
+    same reason `depends_on` turned out to be: `close-slice` targets the plan,
+    so a plan that dropped the spec's `track` would close a slice that could
+    not file itself under any track.
+    """
+    block = _block({**FULL_SOURCE, "milestone_id": "billing-v2", "track": "track-2"})
+    assert 'track: "track-2"' in block
+
+
+def test_frontmatter_block_omits_a_track_the_source_does_not_have():
+    assert "track:" not in _block(FULL_SOURCE)
+
+
 def test_frontmatter_block_declares_no_kind():
     """A spec and its plan are the same slice; `kind: plan` is not a kind."""
     assert "kind:" not in _block(FULL_SOURCE)
