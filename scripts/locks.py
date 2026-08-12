@@ -32,6 +32,19 @@ from scripts.utils import _is_process_alive, _sanitize_id
 #: How long a lock may sit in `starting` before it is considered abandoned.
 LOCK_START_GRACE_SECONDS = 60
 
+#: The state a runner leaves behind when it could not judge its own run: the
+#: client died over a workspace that was still changing, so no status was
+#: written, nothing was torn down, and nobody knows whether an agent is still
+#: writing in that tree.
+#:
+#: It is the only state with no self-healing story. `running` resolves when its
+#: pid dies, `starting` when its grace window elapses — both are observations,
+#: and this state exists precisely because the observation failed. So it is
+#: held unconditionally until a human resolves it with `certify` or
+#: `reconcile`, and that is the point rather than an oversight: releasing it
+#: would let a re-dispatch enter a worktree that may still have an agent in it.
+LOCK_STATE_UNRESOLVED = "unresolved"
+
 _MAX_RECLAIM_ATTEMPTS = 3
 
 #: Bounded retry for a transient Windows sharing violation: another thread
@@ -62,6 +75,12 @@ def _retry_on_sharing_violation(func, *args, **kwargs):
 
 def _lock_is_held(data: dict, *, is_alive=_is_process_alive) -> bool:
     state = data.get("state")
+    if state == LOCK_STATE_UNRESOLVED:
+        # No pid to consult and no clock to run out. Held is the fail-closed
+        # reading: the alternative is a dispatch into a tree whose agent may
+        # still be alive, which is the harm the whole `unknown` verdict exists
+        # to prevent.
+        return True
     if state == "running":
         pid = data.get("pid")
         if not pid:
@@ -141,6 +160,28 @@ def acquire_slice_lock(slice_id: str, project_root: Path) -> Path:
                 existing = json.loads(lock_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError, ValueError):
                 existing = {}
+            if existing.get("state") == LOCK_STATE_UNRESOLVED:
+                # Distinct from "a supervisor is running": nothing is running.
+                # A run ended without anyone establishing what it left behind,
+                # and re-dispatching would put a second agent into a worktree
+                # the first may never have left. Naming the two exits is not
+                # politeness — a held lock with no advertised way out is a
+                # wedged slice, and the operator's next move differs by which
+                # kind of document this is.
+                raise LockError(
+                    f"Slice '{slice_id}' is locked in state "
+                    f"'{LOCK_STATE_UNRESOLVED}': '{existing.get('role', '?')}' "
+                    f"exited {existing.get('exit_code', '?')} and nothing "
+                    f"observed whether its work finished, so no status was "
+                    f"written and the tree was left alone.\n"
+                    f"   Resolve it before dispatching again. If a document "
+                    f"was produced and reads as complete: `certify --file "
+                    f"<document>`. If the work is to be abandoned and the "
+                    f"slice returned to its gate: `reconcile --file "
+                    f"<document> --yes` — but check "
+                    f".worktrees/{slice_id} is genuinely idle first, because "
+                    f"nothing here can."
+                )
             if _lock_is_held(existing):
                 raise LockError(
                     f"Slice '{slice_id}' is already locked "
@@ -174,6 +215,39 @@ def claim_slice_lock(lock_file: Path, pid: int, **meta) -> None:
     data.update(meta)
     data["pid"] = pid
     data["state"] = "running"
+    _write_replace(lock_file, data)
+
+
+def mark_lock_unresolved(
+    lock_file: Path, *, role: str, exit_code: int, log: str
+) -> None:
+    """Record that this run ended without a verdict, and keep the lock.
+
+    Called instead of releasing, on the one path where the runner declines to
+    judge. Everything the operator needs to decide what to do next is written
+    here rather than left in the log: the log says what happened, the lock says
+    that nothing was concluded from it — and the lock is what every other
+    command already reads.
+
+    Uses the same atomic replace as `claim_slice_lock`, so a concurrent
+    `status` or `wait` sees the old content or the new one, never a partial
+    write that would parse as `{}` and read as "nothing owns this slice".
+    """
+    lock_file = Path(lock_file)
+    try:
+        data = json.loads(lock_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        data = {}
+    data.update(
+        {
+            "state": LOCK_STATE_UNRESOLVED,
+            "verdict": "unknown",
+            "role": role,
+            "exit_code": exit_code,
+            "log": str(log),
+            "unresolved_at": time.time(),
+        }
+    )
     _write_replace(lock_file, data)
 
 

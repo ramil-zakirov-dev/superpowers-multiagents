@@ -29,7 +29,7 @@ from pathlib import Path
 from scripts.errors import OrchestratorError
 from scripts.frontmatter import parse_frontmatter
 from scripts.git_ops import branch_exists, commits_since, current_branch
-from scripts.locks import _lock_is_held
+from scripts.locks import LOCK_STATE_UNRESOLVED, _lock_is_held
 from scripts.paths import lock_path, logs_dir
 from scripts.utils import _is_process_alive
 
@@ -206,6 +206,17 @@ def describe_lock(lock_file: Path, data: dict | None, held: bool) -> str:
         return f"no lock file at {lock_file} — nothing owns this slice"
     if not data:
         return f"lock at {lock_file} is unreadable — nothing verifiably owns this slice"
+    if data.get("state") == LOCK_STATE_UNRESOLVED:
+        # The generic fallback below would print "is in state 'unresolved'",
+        # which says the word and none of the meaning. This is the one state a
+        # reader cannot act on without being told what it implies: no status
+        # was written, nothing was torn down, and the tree may still be busy.
+        return (
+            f"lock is unresolved: {data.get('role', '?')!r} exited "
+            f"{data.get('exit_code', '?')} and nothing observed whether its "
+            f"work finished, so no status was written; resolve it with "
+            f"`certify` or `reconcile --yes`"
+        )
     if data.get("state") == "running" and data.get("pid"):
         liveness = "alive" if held else "not alive"
         return f"lock names supervisor pid {data['pid']}, which is {liveness}"
@@ -240,6 +251,11 @@ OUTCOME_TERMINAL = "terminal"
 OUTCOME_ABANDONED = "abandoned"
 OUTCOME_TIMED_OUT = "timed_out"
 OUTCOME_UNREADABLE_LOCK = "unreadable_lock"
+
+#: The runner declined to judge and said so in the lock. Kept apart from
+#: abandonment because the advice differs and the abandoned branch's advice —
+#: `reconcile` — is the one action that must not be taken blind here.
+OUTCOME_UNRESOLVED = "unresolved"
 
 #: How many consecutive unreadable polls before a wait gives up. The lock is
 #: rewritten atomically, so one unparseable read is a lost race and not a
@@ -394,6 +410,19 @@ def wait_for_dispatch(
         settled = status not in in_progress
         if settled and (until is None or status in until):
             return WaitResult(OUTCOME_TERMINAL, status, elapsed)
+        if data and data.get("state") == LOCK_STATE_UNRESOLVED:
+            # Reported under `until` as well, unlike failure and abandonment.
+            # Those are swallowed because the caller repairs them by hand and
+            # a wakeup it will act on nothing for is noise. This one is
+            # different in kind, and the difference is the held lock: a failed
+            # slice left alone costs nothing, while an unresolved one refuses
+            # every re-dispatch of that slice until a human resolves it.
+            # Staying silent here means the operator finds out never — which
+            # is what happened on 2026-08-12.
+            return WaitResult(
+                OUTCOME_UNRESOLVED, status, elapsed,
+                evidence=describe_lock(lock_file, data, lock_held),
+            )
         if not lock_held and not settled and until is None:
             # No live supervisor and the status never moved. Under `until`
             # this is not reported either: like a failure, it needs a human,

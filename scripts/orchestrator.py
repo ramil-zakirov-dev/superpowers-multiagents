@@ -37,7 +37,12 @@ from scripts.git_ops import (
     merge_and_cleanup_worktree,
 )
 from scripts.hooks import canonical_events, run_infrastructure_hook
-from scripts.locks import acquire_slice_lock, release_slice_lock, release_slice_lock_file
+from scripts.locks import (
+    LOCK_STATE_UNRESOLVED,
+    acquire_slice_lock,
+    release_slice_lock,
+    release_slice_lock_file,
+)
 from scripts.paths import (
     ARTIFACT_PREFIXES, DOCUMENT_DIRNAMES, document_prompt_path,
     lock_path, log_path, logs_dir, resolve_docs_base,
@@ -1013,7 +1018,16 @@ def cmd_certify(args):
     # evidence this command does not have. Worse, its verdict may be `gate`,
     # and then the plan would say generated for a run recorded as producing
     # nothing.
-    if not abandonment.is_abandoned(
+    #
+    # An *unresolved* lock is the opposite case and must not be caught by that
+    # refusal: it means a supervisor formed no verdict at all and said so, and
+    # the runner's own log tells the operator to come here. Refusing would
+    # break the instruction the runner prints.
+    _lock, lock_data, _held = abandonment.read_lock_state(slice_id, project_root)
+    unresolved = bool(lock_data) and (
+        lock_data.get("state") == LOCK_STATE_UNRESOLVED
+    )
+    if not unresolved and not abandonment.is_abandoned(
         current_status, slice_id, project_root,
         {current_status},          # treat the drafting status as in-flight
     ):
@@ -1096,6 +1110,50 @@ def cmd_reconcile(args):
             f"treats as in-progress ({sorted(in_progress)}). Nothing to reconcile."
         )
         sys.exit(1)
+
+    # An unresolved lock is reconcilable, and this branch has to come before
+    # the abandonment checks below — `is_abandoned` reads it as held, so the
+    # live-supervisor refusal would fire on a slice with no supervisor at all.
+    # What the operator asserts by doing this is not something the machine can
+    # observe, so the machine says exactly what is being asserted and leaves
+    # `--yes` standing in front of it.
+    _lock, lock_data, _held = abandonment.read_lock_state(slice_id, project_root)
+    if lock_data and lock_data.get("state") == LOCK_STATE_UNRESOLVED:
+        target_status = (
+            abandonment.gate_for_in_progress(config, current_status) or "FAILED"
+        )
+        print(f"Slice '{slice_id}' is unresolved:")
+        print(f"   status: {current_status}")
+        print(f"   {abandonment.lock_evidence(slice_id, project_root)}")
+        if not getattr(args, "yes", False):
+            print(
+                f"Refusing to move {filepath.name} to {target_status} without "
+                f"--yes. Reconciling here asserts something nothing can "
+                f"observe: that no agent is still writing in "
+                f".worktrees/{slice_id}. Look at that tree — and at "
+                f"feat/{slice_id}, which may already carry the run's work — "
+                f"then re-run with --yes."
+            )
+            sys.exit(2)
+        valid_statuses, transitions = milestone_mod.machine_for(
+            milestone_mod.SLICE_KIND, config
+        )
+        if not update_frontmatter_status(
+            filepath, target_status, valid_statuses, transitions
+        ):
+            print(
+                f"Error: could not move '{slice_id}' from '{current_status}' to "
+                f"{target_status}. The unresolved lock was kept."
+            )
+            sys.exit(1)
+        release_slice_lock(slice_id, project_root)
+        print(f"Released the unresolved lock for '{slice_id}'.")
+        print(
+            f"'{slice_id}' is back at {target_status}. The work the run may "
+            f"have landed on feat/{slice_id} is untouched — this records that "
+            f"nobody judged the run, not that the work is bad."
+        )
+        return
 
     if abandonment.is_hand_owned(current_status, slice_id, project_root, in_progress):
         print(
@@ -1200,6 +1258,31 @@ def _report_wait_result(
         print(f"Status is still '{result.status}'. Log: {log}")
         print(f"Audit the work, then run: reconcile --file {document} --yes")
         return 2
+    if result.outcome == abandonment.OUTCOME_UNRESOLVED:
+        # Its own code, because the caller that backgrounds this wait acts on
+        # the number and cannot read prose. Under `2` it would be sent to
+        # `reconcile`, which returns the slice to its gate — and the run this
+        # code reports may have finished perfectly well. Both exits are named
+        # because which one applies depends on what the role produces, and the
+        # command has no way to know that for the operator.
+        print(
+            f"Slice '{slice_id}' is unresolved after {result.elapsed:.0f}s: "
+            f"{result.evidence}."
+        )
+        print(f"Status is still '{result.status}'. Log: {log}")
+        print(
+            "Read the log and the branch first — an unresolved run is one "
+            "nobody judged, not one that failed."
+        )
+        print(
+            f"   If it produced a document that reads as complete: "
+            f"certify --file {document}"
+        )
+        print(
+            f"   If the work is to be abandoned: reconcile --file {document} "
+            f"--yes, once you have checked the worktree is idle."
+        )
+        return 5
     if result.outcome == abandonment.OUTCOME_UNREADABLE_LOCK:
         # Exit 3, with the timeout's codes: this says the watcher failed, not
         # that the dispatch did. A caller must not read it as an outcome.

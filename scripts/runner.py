@@ -36,7 +36,11 @@ from scripts.errors import ConfigError, HookError, OrchestratorError
 from scripts.git_ops import commits_since
 from scripts.frontmatter import parse_frontmatter, update_frontmatter_status
 from scripts.hooks import canonical_events, run_infrastructure_hook
-from scripts.locks import claim_slice_lock, release_slice_lock_file
+from scripts.locks import (
+    claim_slice_lock,
+    mark_lock_unresolved,
+    release_slice_lock_file,
+)
 
 FAILED_STATUS = "FAILED"
 
@@ -88,15 +92,32 @@ def run_supervised(
     log_file = Path(log_file)
 
     claim_slice_lock(lock_file, os.getpid(), role=role)
+    exit_code = 127
+    verdict = None
     try:
         exit_code = _run_child(argv, cwd, log_file)
-        _record_outcome(
+        verdict = _record_outcome(
             role, target_file, project_root, exit_code, log_file, sandbox_branch,
             base_ref, gate_status,
         )
         return exit_code
     finally:
-        release_slice_lock_file(lock_file)
+        # The lock is the only thing this process leaves behind that another
+        # command reads, so it is where a verdict nobody reached has to live.
+        # Releasing it on `unknown` said "nothing owns this slice" about a tree
+        # that may still have an agent writing in it — indistinguishable, from
+        # outside, from an abandoned dispatch, and `wait` duly advised
+        # `reconcile` (issue #34).
+        #
+        # An exception still releases. Only a deliberate `unknown` holds: a
+        # crash here means the epilogue never ran, which is the ordinary
+        # abandonment the existing machinery already describes correctly.
+        if verdict == VERDICT_UNKNOWN:
+            mark_lock_unresolved(
+                lock_file, role=role, exit_code=exit_code, log=str(log_file)
+            )
+        else:
+            release_slice_lock_file(lock_file)
 
 
 def _existing_log_size(log_file: Path) -> int:
@@ -487,8 +508,13 @@ def _record_outcome(
     sandbox_branch: str = "",
     base_ref: str = "",
     gate_status: str = "",
-) -> None:
-    """Advance the slice status and fire the completion hook."""
+) -> str | None:
+    """Advance the slice status and fire the completion hook.
+
+    Returns the verdict, which `run_supervised` needs in order to decide what
+    to do with the lock — `None` when the configuration could not be read and
+    no verdict was formed at all.
+    """
     try:
         config = load_agent_config(project_root)
         validate_config(config)
@@ -497,7 +523,7 @@ def _record_outcome(
         _log_and_print(
             log_file, f"[runner] configuration unusable, cannot record outcome: {exc}"
         )
-        return
+        return None
 
     state_machine = config["state_machine"]
 
@@ -525,8 +551,15 @@ def _record_outcome(
             missing = _promote_produced(
                 role, agent, target_file, log_file, state_machine
             )
-        if missing:
-            _log_and_print(log_file, missing)
+    # `missing` is deliberately NOT printed here. Every one of those messages
+    # ends by announcing a decision — "Returning the slice to its gate rather
+    # than certifying the run" — and the decision has not been taken yet: the
+    # liveness verdict below can still answer `unknown`, in which case nothing
+    # is returned anywhere. Printed early it also dates badly, because the
+    # observation is made at the client's death and the watch that follows can
+    # run for half an hour. Live on 2026-08-12 that produced a log claiming the
+    # run left no commits, directly above the line saying no verdict was
+    # reached, on a run that had by then committed 22 times (issue #34).
 
     if examined and not missing:
         verdict = VERDICT_SUCCESS
@@ -543,15 +576,39 @@ def _record_outcome(
         # Everything below writes something down. None of it may run on an
         # answer nobody has: not the status, not the completion hook, and
         # above all not the teardown, which would reclaim a stack the agent
-        # may still be using. The lock stays held until run_supervised's
-        # `finally`, which is the other half of not inviting a re-dispatch.
+        # may still be using. `run_supervised` marks the lock unresolved
+        # instead of releasing it, which is the other half of not inviting a
+        # re-dispatch.
         _log_and_print(
             log_file,
             f"[runner] {role} exited {exit_code}, but the run's fate was not "
             f"observed; status left at its current value and nothing torn "
             f"down. log: {log_file}",
         )
-        return
+        if missing:
+            # What the postcondition saw, reported as a dated observation and
+            # never as a conclusion. It was read the moment the client died;
+            # by now the watch has run and the tree has been changing
+            # throughout, so the only honest form of this sentence names when
+            # it was taken and says the question is still open.
+            _log_and_print(
+                log_file,
+                f"[runner] at the moment the client died the run had left no "
+                f"artifact the pipeline could see. That was a reading taken "
+                f"then, not a verdict: the workspace kept changing afterwards. "
+                f"Check the branch and the worktree before concluding anything.",
+            )
+        _log_and_print(
+            log_file,
+            f"[runner] the slice's lock is now 'unresolved' and refuses a "
+            f"re-dispatch. Resolve it with `certify` (a produced document that "
+            f"reads as complete) or `reconcile --yes` (abandon the run and "
+            f"return the slice to its gate).",
+        )
+        return verdict
+
+    if missing:
+        _log_and_print(log_file, missing)
 
     if verdict == VERDICT_SUCCESS:
         candidates = [agent.get("success_status")]
@@ -631,6 +688,8 @@ def _record_outcome(
             # Same rule as the hook above: the slice's outcome is recorded and
             # must not be overturned by a container that would not sweep.
             _log_and_print(log_file, f"[runner] sandbox teardown failed: {exc}")
+
+    return verdict
 
 
 def main(argv=None) -> int:
